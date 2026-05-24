@@ -1,0 +1,44 @@
+{
+  "project": "r2share",
+  "repository": "https://github.com/riverho/r2share",
+  "branch": "main",
+  "release": {
+    "version": "0.1.0",
+    "tag": "v0.1.0",
+    "status": "frozen",
+    "date": "2026-05-24",
+    "timezone": "Asia/Shanghai"
+  },
+  "build": {
+    "windows": "npm run desktop:build:win",
+    "artifacts": [
+      "src-tauri/target/release/r2share.exe",
+      "src-tauri/target/release/bundle/nsis/r2share_0.1.0_x64-setup.exe",
+      "src-tauri/target/release/bundle/msi/r2share_0.1.0_x64_en-US.msi"
+    ]
+  },
+  "sourcePolicy": {
+    "tracked": [
+      "README.md",
+      "index.html",
+      "package.json",
+      "package-lock.json",
+      "src-tauri/Cargo.toml",
+      "src-tauri/Cargo.lock",
+      "src-tauri/build.rs",
+      "src-tauri/tauri.conf.json",
+      "src-tauri/capabilities/",
+      "src-tauri/icons/",
+      "src-tauri/src/",
+      "version-control.json"
+    ],
+    "ignored": [
+      "node_modules/",
+      "src-tauri/target/",
+      "src-tauri/gen/",
+      "internal markdown docs except README.md",
+      "agent memory and guardrail files",
+      "local setup helpers"
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "r2share",
+  "version": "0.1.0",
+  "description": "Cloudflare R2 tray uploader",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "desktop:build:win": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "wrangler": "^4.94.0"
+  }
+}

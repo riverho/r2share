@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tauri.app/v2/config/capabilities/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for r2share",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible",
+    "core:window:allow-start-dragging",
+    "dialog:default",
+    "dialog:allow-open"
+  ]
+}

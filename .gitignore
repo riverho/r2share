@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+src-tauri/target/
+src-tauri/gen/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.log
+
+# Agent memory, guardrails, and local workspace metadata
+.codex/
+.claude/
+.cursor/
+.continue/
+.windsurf/
+.aider*
+CLAUDE.md
+AGENTS.md
+MEMORY.md
+GUARDRAILS.md
+
+# Internal docs, planning, and architecture files
+*.md
+!README.md
+docs/
+architecture/
+*.drawio
+*.excalidraw
+*.mmd
+*.puml
+
+# Local setup helpers
+setup-r2.ps1
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

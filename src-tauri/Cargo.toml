@@ -1,0 +1,30 @@
+[package]
+name = "r2share"
+version = "0.1.0"
+description = "r2share — Cloudflare R2 tray uploader"
+edition = "2021"
+
+[lib]
+name = "r2share_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "r2share"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri            = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+serde            = { version = "1", features = ["derive"] }
+serde_json       = "1"
+tokio            = { version = "1", features = ["full"] }
+aws-config       = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3       = "1"
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+rusqlite         = { version = "0.31", features = ["bundled"] }
+base64           = "0.22"
+mime_guess       = "2"
+rand             = "0.8"

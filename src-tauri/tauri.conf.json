@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "r2share",
+  "version": "0.1.0",
+  "identifier": "com.summonai.r2share",
+  "build": {
+    "frontendDist": ["../index.html"]
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "r2share",
+        "width": 380,
+        "height": 520,
+        "resizable": false,
+        "decorations": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  }
+}
