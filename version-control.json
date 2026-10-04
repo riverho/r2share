@@ -3,18 +3,18 @@
   "repository": "https://github.com/riverho/r2share",
   "branch": "main",
   "release": {
-    "version": "0.1.0",
-    "tag": "v0.1.0",
+    "version": "0.1.1",
+    "tag": "v0.1.1",
     "status": "frozen",
-    "date": "2026-05-24",
+    "date": "2026-10-05",
     "timezone": "Asia/Shanghai"
   },
   "build": {
     "windows": "npm run desktop:build:win",
     "artifacts": [
       "src-tauri/target/release/r2share.exe",
-      "src-tauri/target/release/bundle/nsis/r2share_0.1.0_x64-setup.exe",
-      "src-tauri/target/release/bundle/msi/r2share_0.1.0_x64_en-US.msi"
+      "src-tauri/target/release/bundle/nsis/r2share_0.1.1_x64-setup.exe",
+      "src-tauri/target/release/bundle/msi/r2share_0.1.1_x64_en-US.msi"
     ]
   },
   "sourcePolicy": {

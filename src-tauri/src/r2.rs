@@ -2,13 +2,32 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     config::{Builder as S3Builder, Region},
+    error::DisplayErrorContext,
     primitives::ByteStream,
+    types::{CompletedMultipartUpload, CompletedPart},
     Client,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::task::JoinSet;
 
 use crate::config::Config;
+
+/// Files larger than this are sent as a multipart upload.
+const MULTIPART_THRESHOLD: u64 = 10 * 1024 * 1024;
+/// Part size for multipart uploads.  R2 requires every part except the last
+/// to be at least 5 MiB and all non-final parts to be the same size.
+const PART_SIZE: u64 = 5 * 1024 * 1024;
+/// Number of parts uploaded in parallel.
+const PART_CONCURRENCY: usize = 4;
+/// Attempts per part (on top of the SDK's own retries) before giving up.
+const PART_ATTEMPTS: u32 = 4;
+
+/// Called with `(bytes_sent, total_bytes)` as an upload progresses.
+pub type ProgressFn = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 /// Returned to the frontend after a successful upload.
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,10 +91,17 @@ impl R2Client {
     }
 
     /// Upload a file from a local path.  The caller supplies the R2 key.
-    pub async fn upload_path(&self, path: &str, key: &str) -> Result<UploadResult, String> {
+    /// Large files are streamed from disk as a multipart upload.
+    pub async fn upload_path(
+        &self,
+        path: &str,
+        key: &str,
+        on_progress: ProgressFn,
+    ) -> Result<UploadResult, String> {
         let p = Path::new(path);
-        let data = std::fs::read(p).map_err(|e| format!("Cannot read file: {}", e))?;
-        let size = data.len() as i64;
+        let size = std::fs::metadata(p)
+            .map_err(|e| format!("Cannot read file: {}", e))?
+            .len();
 
         let display_name = p
             .file_name()
@@ -85,13 +111,21 @@ impl R2Client {
 
         let content_type = mime_guess::from_path(p).first_or_octet_stream().to_string();
 
-        self.put_object(key, data, &content_type).await?;
+        on_progress(0, size);
+        if size > MULTIPART_THRESHOLD {
+            self.multipart_upload(p, key, size, &content_type, &on_progress)
+                .await?;
+        } else {
+            let data = std::fs::read(p).map_err(|e| format!("Cannot read file: {}", e))?;
+            self.put_object(key, data, &content_type).await?;
+            on_progress(size, size);
+        }
 
         Ok(UploadResult {
             key: key.to_string(),
             url: self.public_url(key),
             display_name,
-            size,
+            size: size as i64,
             content_type,
         })
     }
@@ -156,7 +190,179 @@ impl R2Client {
             .send()
             .await
             .map(|_| ())
-            .map_err(|e| format!("Upload failed: {}", e))
+            .map_err(|e| format!("Upload failed: {}", DisplayErrorContext(&e)))
+    }
+
+    /// Create a multipart upload, send the parts, then complete it.
+    /// The upload is aborted on failure so no orphaned parts are left billed in R2.
+    async fn multipart_upload(
+        &self,
+        path: &Path,
+        key: &str,
+        size: u64,
+        content_type: &str,
+        on_progress: &ProgressFn,
+    ) -> Result<(), String> {
+        let created = self
+            .client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .send()
+            .await
+            .map_err(|e| format!("Upload failed: {}", DisplayErrorContext(&e)))?;
+        let upload_id = created
+            .upload_id()
+            .ok_or("Upload failed: R2 returned no upload id")?
+            .to_string();
+
+        let parts = match self
+            .upload_parts(path, key, &upload_id, size, on_progress)
+            .await
+        {
+            Ok(parts) => parts,
+            Err(e) => {
+                self.abort_multipart(key, &upload_id).await;
+                return Err(e);
+            }
+        };
+
+        let completed = self
+            .client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(&upload_id)
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(parts))
+                    .build(),
+            )
+            .send()
+            .await;
+        if let Err(e) = completed {
+            self.abort_multipart(key, &upload_id).await;
+            return Err(format!("Upload failed: {}", DisplayErrorContext(&e)));
+        }
+        Ok(())
+    }
+
+    /// Upload every part, `PART_CONCURRENCY` at a time, reporting progress as
+    /// each one finishes.  Returns the completed parts in part-number order.
+    async fn upload_parts(
+        &self,
+        path: &Path,
+        key: &str,
+        upload_id: &str,
+        size: u64,
+        on_progress: &ProgressFn,
+    ) -> Result<Vec<CompletedPart>, String> {
+        let part_count = size.div_ceil(PART_SIZE);
+        let path = Arc::new(path.to_path_buf());
+        let mut tasks = JoinSet::new();
+        let mut next = 0u64;
+        let mut sent = 0u64;
+        let mut parts = Vec::with_capacity(part_count as usize);
+
+        loop {
+            while tasks.len() < PART_CONCURRENCY && next < part_count {
+                let offset = next * PART_SIZE;
+                let len = PART_SIZE.min(size - offset);
+                tasks.spawn(upload_part(
+                    self.client.clone(),
+                    self.bucket.clone(),
+                    key.to_string(),
+                    upload_id.to_string(),
+                    path.clone(),
+                    (next + 1) as i32,
+                    offset,
+                    len,
+                ));
+                next += 1;
+            }
+
+            // Dropping `tasks` on an early return cancels the remaining parts.
+            let Some(joined) = tasks.join_next().await else {
+                break;
+            };
+            let (part, len) = joined.map_err(|e| format!("Upload failed: {}", e))??;
+            sent += len;
+            on_progress(sent, size);
+            parts.push(part);
+        }
+
+        parts.sort_by_key(|p| p.part_number());
+        Ok(parts)
+    }
+
+    async fn abort_multipart(&self, key: &str, upload_id: &str) {
+        let _ = self
+            .client
+            .abort_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .send()
+            .await;
+    }
+}
+
+/// Read one part from disk and upload it, retrying with backoff.
+#[allow(clippy::too_many_arguments)]
+async fn upload_part(
+    client: Client,
+    bucket: String,
+    key: String,
+    upload_id: String,
+    path: Arc<PathBuf>,
+    part_number: i32,
+    offset: u64,
+    len: u64,
+) -> Result<(CompletedPart, u64), String> {
+    let mut buf = vec![0u8; len as usize];
+    let mut file = tokio::fs::File::open(path.as_ref())
+        .await
+        .map_err(|e| format!("Cannot read file: {}", e))?;
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|e| format!("Cannot read file: {}", e))?;
+    file.read_exact(&mut buf)
+        .await
+        .map_err(|e| format!("Cannot read file: {}", e))?;
+
+    let mut attempt = 1;
+    loop {
+        let result = client
+            .upload_part()
+            .bucket(&bucket)
+            .key(&key)
+            .upload_id(&upload_id)
+            .part_number(part_number)
+            .body(ByteStream::from(buf.clone()))
+            .send()
+            .await;
+
+        match result {
+            Ok(out) => {
+                let part = CompletedPart::builder()
+                    .part_number(part_number)
+                    .set_e_tag(out.e_tag().map(str::to_string))
+                    .build();
+                return Ok((part, len));
+            }
+            Err(_) if attempt < PART_ATTEMPTS => {
+                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+                attempt += 1;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Upload failed on part {}: {}",
+                    part_number,
+                    DisplayErrorContext(&e)
+                ))
+            }
+        }
     }
 }
 

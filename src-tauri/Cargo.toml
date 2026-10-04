@@ -1,6 +1,6 @@
 [package]
 name = "r2share"
-version = "0.1.0"
+version = "0.1.1"
 description = "r2share — Cloudflare R2 tray uploader"
 edition = "2021"
 

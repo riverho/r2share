@@ -1,18 +1,24 @@
 use base64::Engine;
-use tauri::{Manager, State};
+use std::sync::Arc;
+use tauri::{Emitter, Manager, State};
 
 use crate::{
     config::Config,
     db,
-    r2::{generate_key, generate_named_key, R2Client, UploadResult},
+    r2::{generate_key, generate_named_key, ProgressFn, R2Client, UploadResult},
     AppState,
 };
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 
 /// Upload a file from a local filesystem path (from the file picker or drag-drop).
+/// Emits `upload-progress` events (`{ sent, total }` in bytes) while uploading.
 #[tauri::command]
-pub async fn upload_file(path: String, state: State<'_, AppState>) -> Result<UploadResult, String> {
+pub async fn upload_file(
+    path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<UploadResult, String> {
     let config = state.config.lock().await.clone();
     require_configured(&config)?;
 
@@ -23,7 +29,10 @@ pub async fn upload_file(path: String, state: State<'_, AppState>) -> Result<Upl
     let key = generate_key(ext);
 
     let client = R2Client::new(&config).await?;
-    let result = client.upload_path(&path, &key).await?;
+    let on_progress: ProgressFn = Arc::new(move |sent, total| {
+        let _ = app.emit("upload-progress", serde_json::json!({ "sent": sent, "total": total }));
+    });
+    let result = client.upload_path(&path, &key, on_progress).await?;
 
     let db = state.db.lock().await;
     db::insert(

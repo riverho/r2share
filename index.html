@@ -670,6 +670,7 @@
   const progressFill = $('progress-fill');
   const upPct        = $('up-pct');
   const upFilename   = $('up-filename');
+  const upHint       = $('up-hint');
   const doneCard     = $('done-card');
   const doneFilename = $('done-filename');
   const btnEditName  = $('btn-edit-name');
@@ -768,6 +769,7 @@
   function startProgressAnim(filename) {
     setPhase('uploading');
     upFilename.textContent = filename;
+    upHint.textContent = 'Uploading to R2…';
     progressFill.style.width = '0%';
     upPct.textContent = '0%';
     let pct = 0;
@@ -807,16 +809,31 @@
   }
 
   // ── Upload: file path ────────────────────────────────────────────────────────
+  // Real progress comes from Rust `upload-progress` events ({ sent, total } bytes).
   async function uploadPath(filePath) {
     const name = filePath.replace(/\\/g, '/').split('/').pop();
-    const iv   = startProgressAnim(name);
+    setPhase('uploading');
+    upFilename.textContent = name;
+    progressFill.style.width = '0%';
+    upPct.textContent = '0%';
+    upHint.textContent = 'Uploading to R2…';
+
+    const unlisten = window.__TAURI__.event
+      ? await window.__TAURI__.event.listen('upload-progress', ({ payload }) => {
+          const pct = payload.total ? (payload.sent / payload.total) * 100 : 0;
+          progressFill.style.width = pct + '%';
+          upPct.textContent = Math.floor(pct) + '%';
+          upHint.textContent = `${fmtSize(payload.sent)} of ${fmtSize(payload.total)}`;
+        })
+      : () => {};
     try {
       const result = await invoke('upload_file', { path: filePath });
-      finishProgress(iv);
+      finishProgress(null);
       setTimeout(() => showDone(result), 300);
     } catch (err) {
-      finishProgress(iv);
       showError(String(err));
+    } finally {
+      unlisten();
     }
   }
 

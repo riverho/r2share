@@ -17,8 +17,8 @@ Tiny Windows tray uploader for Cloudflare R2. Drop a file, paste an image, get a
 
 Download the Windows installer from the latest GitHub release:
 
-- NSIS installer: `r2share_0.1.0_x64-setup.exe`
-- MSI installer: `r2share_0.1.0_x64_en-US.msi`
+- NSIS installer: `r2share_0.1.1_x64-setup.exe`
+- MSI installer: `r2share_0.1.1_x64_en-US.msi`
 
 After first launch, open Settings and enter:
 
@@ -48,8 +48,8 @@ Build outputs are written to:
 
 ```text
 src-tauri/target/release/r2share.exe
-src-tauri/target/release/bundle/nsis/r2share_0.1.0_x64-setup.exe
-src-tauri/target/release/bundle/msi/r2share_0.1.0_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/r2share_0.1.1_x64-setup.exe
+src-tauri/target/release/bundle/msi/r2share_0.1.1_x64_en-US.msi
 ```
 
 ## Development
@@ -63,4 +63,4 @@ npm run dev
 
 This repository snapshot is framed by `version-control.json`.
 
-Current frozen release: `v0.1.0`.
+Current frozen release: `v0.1.1`.
