@@ -20,7 +20,10 @@ pub async fn upload_file(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<UploadResult, String> {
-    let config = state.app_config.lock().await.default_flat();
+    let (config, vault_name) = {
+        let app_cfg = state.app_config.lock().await;
+        (app_cfg.default_flat(), app_cfg.default_vault.clone())
+    };
     require_configured(&config)?;
 
     let ext = std::path::Path::new(&path)
@@ -43,6 +46,7 @@ pub async fn upload_file(
         result.size,
         &result.content_type,
         &result.url,
+        &vault_name,
     )
     .map_err(|e| e.to_string())?;
 
@@ -56,7 +60,10 @@ pub async fn upload_clipboard_image(
     mime_type: String,
     state: State<'_, AppState>,
 ) -> Result<UploadResult, String> {
-    let config = state.app_config.lock().await.default_flat();
+    let (config, vault_name) = {
+        let app_cfg = state.app_config.lock().await;
+        (app_cfg.default_flat(), app_cfg.default_vault.clone())
+    };
     require_configured(&config)?;
 
     let ext = match mime_type.as_str() {
@@ -90,6 +97,7 @@ pub async fn upload_clipboard_image(
         result.size,
         &result.content_type,
         &result.url,
+        &vault_name,
     )
     .map_err(|e| e.to_string())?;
 
@@ -102,7 +110,7 @@ pub async fn upload_clipboard_image(
 #[tauri::command]
 pub async fn list_files(state: State<'_, AppState>) -> Result<Vec<db::FileRecord>, String> {
     let db = state.db.lock().await;
-    db::list(&db).map_err(|e| e.to_string())
+    db::list(&db, None, None).map_err(|e| e.to_string())
 }
 
 /// Delete an object from R2 and remove it from local history.
@@ -153,6 +161,7 @@ pub async fn rename_file(
         content_type: old_record.content_type,
         url: new_url.clone(),
         uploaded_at: old_record.uploaded_at,
+        vault: old_record.vault,
     };
 
     let db = state.db.lock().await;
