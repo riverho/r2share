@@ -72,6 +72,12 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: VaultCmd,
     },
+
+    /// One-way folder sync (local → R2). Never deletes remote objects.
+    Sync {
+        #[command(subcommand)]
+        cmd: SyncCmd,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -135,6 +141,40 @@ pub enum VaultCmd {
     /// Test R2 connectivity for a vault (HeadBucket).
     Test {
         name: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SyncCmd {
+    /// Add a folder → vault mapping (creates the folder if missing).
+    Add {
+        path: PathBuf,
+        /// Vault name (defaults to the configured default vault).
+        #[arg(long)]
+        vault: Option<String>,
+    },
+    /// Remove a folder mapping from config (does not delete remote objects).
+    Rm {
+        path: PathBuf,
+    },
+    /// List folder mappings.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show sync_state summary for mapped folders.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the watcher (or a single scan with --once).
+    Run {
+        /// Scan once and exit.
+        #[arg(long)]
+        once: bool,
+        /// List actions without uploading.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 

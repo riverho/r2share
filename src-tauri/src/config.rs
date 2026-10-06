@@ -120,12 +120,28 @@ impl Vault {
     }
 }
 
-/// Placeholder for later folder-sync (Slice N). Kept empty in Slice 1.
+/// Local folder → vault mapping for one-way folder sync (local → R2).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FolderMapping {
     pub path: String,
     pub vault: String,
+    /// When true the GUI/CLI watcher skips this mapping.
+    #[serde(default)]
+    pub paused: bool,
 }
+
+impl FolderMapping {
+    pub fn new(path: impl Into<String>, vault: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            vault: vault.into(),
+            paused: false,
+        }
+    }
+}
+
+/// Suggested default sync folder (created on first enable if missing).
+pub const DEFAULT_SYNC_FOLDER: &str = "/workspace/r2share-sync";
 
 /// On-disk config schema version 2.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -231,12 +247,22 @@ impl AppConfig {
                 self.default_vault
             ));
         }
+        let mut seen_paths = std::collections::HashSet::new();
         for m in &self.folder_mappings {
             if m.path.trim().is_empty() {
                 return Err("folder_mappings.path must not be empty".into());
             }
             if m.vault.trim().is_empty() {
                 return Err("folder_mappings.vault must not be empty".into());
+            }
+            if !self.vaults.is_empty() && self.vault_by_name(&m.vault).is_none() {
+                return Err(format!(
+                    "folder_mappings.vault {:?} not found in vaults",
+                    m.vault
+                ));
+            }
+            if !seen_paths.insert(m.path.clone()) {
+                return Err(format!("duplicate folder_mappings.path: {}", m.path));
             }
         }
         Ok(())
