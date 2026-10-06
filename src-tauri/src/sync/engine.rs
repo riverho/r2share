@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rusqlite::Connection;
@@ -23,6 +23,8 @@ use super::uploader::Uploader;
 pub const DEBOUNCE: Duration = Duration::from_millis(1500);
 /// Stability: size must be unchanged across this gap before upload.
 pub const STABLE_WAIT: Duration = Duration::from_millis(250);
+/// How often to retry advisory locks held by another process (e.g. after GUI quits).
+pub const LOCK_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default)]
 pub struct SyncOptions {
@@ -403,6 +405,10 @@ pub async fn run_once(
 }
 
 /// Watcher for all mappings. Debounces events, then re-scans affected roots.
+///
+/// When `upload_cache` is provided, each batch checks `config.json` mtime and
+/// reloads mappings/clients if it changed. Locked-out mappings are retried
+/// every [`LOCK_RETRY`].
 pub async fn run_watcher(
     data_dir: PathBuf,
     uploader_for: UploaderFactory,
@@ -410,6 +416,7 @@ pub async fn run_watcher(
     opts: SyncOptions,
     status: StatusHandle,
     stop: Arc<AtomicBool>,
+    upload_cache: Option<Arc<super::UploaderCache>>,
 ) {
     {
         let maps = mappings.lock().unwrap().clone();
@@ -485,6 +492,7 @@ pub async fn run_watcher(
     }
 
     let mut pending: HashSet<PathBuf> = HashSet::new();
+    let mut last_lock_retry = Instant::now();
     loop {
         if stop.load(Ordering::SeqCst) {
             break;
@@ -502,9 +510,27 @@ pub async fn run_watcher(
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Reload mappings if config.json changed (CLI edits).
+                if let Some(cache) = &upload_cache {
+                    match cache.prepare_batch() {
+                        Ok(Some(maps)) => {
+                            *mappings.lock().unwrap() = maps;
+                        }
+                        Ok(None) => {}
+                        Err(e) => status.set_error(&e),
+                    }
+                }
                 let maps = mappings.lock().unwrap().clone();
                 refresh_watchers(&mut watchers, &maps, &tx, &status);
-                continue;
+                // Periodically retry locks (e.g. GUI quit released them).
+                if last_lock_retry.elapsed() >= LOCK_RETRY {
+                    last_lock_retry = Instant::now();
+                    for m in maps.iter().filter(|m| !m.paused) {
+                        pending.insert(PathBuf::from(&m.path));
+                    }
+                } else {
+                    continue;
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -513,6 +539,17 @@ pub async fn run_watcher(
             continue;
         }
         let roots: Vec<PathBuf> = pending.drain().collect();
+
+        if let Some(cache) = &upload_cache {
+            match cache.prepare_batch() {
+                Ok(Some(maps)) => {
+                    *mappings.lock().unwrap() = maps;
+                }
+                Ok(None) => {}
+                Err(e) => status.set_error(&e),
+            }
+        }
+
         let maps = mappings.lock().unwrap().clone();
         status.set_syncing(roots.len());
 
@@ -529,7 +566,7 @@ pub async fn run_watcher(
             }
             let _lock = match try_acquire_mapping_lock(&data_dir, &m.path) {
                 Ok(Some(l)) => l,
-                Ok(None) => continue,
+                Ok(None) => continue, // still owned elsewhere; LOCK_RETRY will try again
                 Err(e) => {
                     status.set_error(&e);
                     continue;

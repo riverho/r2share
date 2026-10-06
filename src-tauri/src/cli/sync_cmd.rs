@@ -1,6 +1,5 @@
 //! `r2share-cli sync` subcommands.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use super::args::SyncCmd;
 use crate::config::{self, AppConfig, FolderMapping};
 use crate::db;
-use crate::sync::{self, R2Uploader, StatusHandle, SyncOptions, Uploader};
+use crate::sync::{self, StatusHandle, SyncOptions, UploaderCache};
 
 fn load_cfg(data_dir: &Path) -> AppConfig {
     config::load(data_dir)
@@ -145,42 +144,30 @@ fn sync_status(data_dir: &Path, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+
 async fn sync_run(data_dir: &Path, once: bool, dry_run: bool) -> Result<(), String> {
     let cfg = load_cfg(data_dir);
     if cfg.folder_mappings.is_empty() {
         return Err("no folder mappings — add one with: r2share-cli sync add <path>".into());
     }
 
-    let mut clients: HashMap<String, Arc<dyn Uploader>> = HashMap::new();
+    let data_dir_b = data_dir.to_path_buf();
+    let cache = Arc::new(UploaderCache::new(data_dir_b.clone(), dry_run));
     if !dry_run {
         for m in cfg.folder_mappings.iter().filter(|m| !m.paused) {
-            if clients.contains_key(&m.vault) {
-                continue;
-            }
             let v = cfg
                 .vault_by_name(&m.vault)
                 .ok_or_else(|| format!("vault not found: {}", m.vault))?;
-            let flat = v.to_flat();
-            require_configured(&flat)?;
-            let u = R2Uploader::new(&flat).await?;
-            clients.insert(m.vault.clone(), Arc::new(u) as Arc<dyn Uploader>);
+            require_configured(&v.to_flat())?;
+            let _ = cache.get(&m.vault)?;
         }
     }
-    let clients = Arc::new(clients);
-    let dry = dry_run;
-    let uploader_for: Arc<dyn Fn(&str) -> Result<Arc<dyn Uploader>, String> + Send + Sync> =
-        Arc::new(move |vault_name: &str| {
-            if dry {
-                return Ok(Arc::new(sync::MockUploader::new()) as Arc<dyn Uploader>);
-            }
-            clients
-                .get(vault_name)
-                .cloned()
-                .ok_or_else(|| format!("no uploader for vault {vault_name}"))
-        });
+    let uploader_for: sync::UploaderFactory = {
+        let cache = cache.clone();
+        Arc::new(move |vault_name: &str| cache.get(vault_name))
+    };
 
     let opts = SyncOptions { dry_run, once };
-    let data_dir_b = data_dir.to_path_buf();
 
     if once {
         let report =
@@ -216,21 +203,51 @@ async fn sync_run(data_dir: &Path, once: bool, dry_run: bool) -> Result<(), Stri
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_c = stop.clone();
-    std::thread::spawn(move || {
-        let mut buf = String::new();
-        // Block until stdin closes or user hits Ctrl+D; also check stop flag.
-        // For Ctrl+C, rely on process signal terminating the binary.
-        let _ = std::io::stdin().read_line(&mut buf);
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
         stop_c.store(true, Ordering::SeqCst);
     });
 
     println!(
         "watching {} mapping(s). Ownership: advisory lock per mapping under data_dir/sync-locks/ \
-(GUI or this process — first wins). Ctrl+C / EOF to stop.",
+(GUI or this process — first wins; retries every 30s if locked). \
+Stop with SIGINT/SIGTERM (stdin EOF is ignored).",
         cfg.folder_mappings.iter().filter(|m| !m.paused).count()
     );
     let maps = Arc::new(Mutex::new(cfg.folder_mappings.clone()));
     let status = StatusHandle::new();
-    sync::run_watcher(data_dir_b, uploader_for, maps, opts, status, stop).await;
+    sync::run_watcher(
+        data_dir_b,
+        uploader_for,
+        maps,
+        opts,
+        status,
+        stop,
+        Some(cache),
+    )
+    .await;
     Ok(())
+}
+
+/// Block until SIGINT (Ctrl+C) or SIGTERM. Does **not** treat stdin EOF as stop.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

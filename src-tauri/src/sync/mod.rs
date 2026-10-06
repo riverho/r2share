@@ -15,11 +15,13 @@ mod engine;
 mod ignore;
 mod lock;
 mod uploader;
+mod upload_cache;
 
 pub use engine::{run_once, run_watcher, StatusHandle, SyncOptions, SyncReport, SyncStatus, UploaderFactory};
 pub use ignore::{is_ignored, should_ignore_path};
 pub use lock::{try_acquire_mapping_lock, MappingLock};
 pub use uploader::{MockUploader, R2Uploader, UploadOutcome, Uploader};
+pub use upload_cache::UploaderCache;
 
 use std::path::{Component, Path, PathBuf};
 
