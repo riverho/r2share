@@ -923,6 +923,68 @@
     }
   });
 
+  // ── Linux: bypass WebKitGTK's native paste ──────────────────────────────────
+  // WebKitGTK 2.54 segfaults (whole app exits) in its clipboard-targets callback
+  // when its built-in paste runs. On Linux we cancel every WebKit paste path and
+  // read the clipboard natively through Rust (GTK) instead.
+  const isLinuxWebKit = isTauri && /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+  if (isLinuxWebKit) {
+    const isEditable = el => el && !el.readOnly && !el.disabled &&
+      (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' &&
+        /^(text|password|search|url|email|tel|)$/i.test(el.getAttribute('type') || '')));
+
+    const insertText = (el, text) => {
+      try {
+        const start = el.selectionStart ?? el.value.length;
+        const end   = el.selectionEnd ?? el.value.length;
+        el.setRangeText(text, start, end, 'end');
+      } catch (_) {
+        el.value += text; // types without selection API (e.g. email)
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    async function nativePaste() {
+      const el = document.activeElement;
+      try {
+        if (isEditable(el)) {
+          const text = await invoke('read_clipboard_text');
+          if (text && /^pasted-from-vnc-\d+$/i.test(text.trim())) {
+            console.warn('Ignored VNC clipboard test token');
+            return;
+          }
+          if (text) insertText(el, text);
+          return;
+        }
+        if (state.tab !== 'upload' || state.uploadPhase === 'uploading') return;
+        const b64 = await invoke('read_clipboard_image');
+        if (!b64) return;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        uploadClipboardImage(new File([bytes], 'clipboard.png', { type: 'image/png' }));
+      } catch (err) {
+        console.error('Native paste failed:', err);
+      }
+    }
+
+    document.addEventListener('keydown', e => {
+      const k = e.key;
+      const isPaste = ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'v' || k === 'V')) ||
+                      (e.shiftKey && !e.ctrlKey && k === 'Insert');
+      if (!isPaste) return;
+      e.preventDefault();
+      e.stopPropagation();
+      nativePaste();
+    }, true);
+
+    // Middle-click (PRIMARY selection) paste and the context menu's Paste also
+    // go through WebKit's clipboard code — disable both.
+    ['mousedown', 'mouseup', 'auxclick'].forEach(t =>
+      document.addEventListener(t, e => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); } }, true));
+    document.addEventListener('contextmenu', e => e.preventDefault(), true);
+  }
+
   // ── Copy link ─────────────────────────────────────────────────────────────────
   function flashCopied() {
     btnCopy.classList.add('copied');
@@ -1227,6 +1289,14 @@
   // ── First-run: auto-open settings ─────────────────────────────────────────────
   if (window.__r2shareFirstRun) {
     toggleSettings(true);
+  } else {
+    // The Rust-side flag can be set before this page loads (seen on Linux),
+    // so also check the config directly.
+    invoke('get_config').then(c => {
+      if (!c.account_id || !c.access_key_id || !c.secret_access_key || !c.public_url_base) {
+        toggleSettings(true);
+      }
+    }).catch(() => {});
   }
 
   // ── Initial render ────────────────────────────────────────────────────────────
