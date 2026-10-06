@@ -19,6 +19,8 @@
       --success: #3ecf8e;
       --error: #f87171;
       --warning: #fbbf24;
+      --border: var(--bg-border);
+      --danger: var(--error);
 
       --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
       --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
@@ -422,7 +424,7 @@
     .settings-panel {
       position: absolute;
       left: 0; right: 0; bottom: 0;
-      height: 360px;
+      height: 390px;
       background: var(--bg-surface);
       border-top: 1px solid var(--bg-border);
       border-radius: 12px 12px 0 0;
@@ -449,6 +451,14 @@
       flex: 1; overflow-y: auto;
       display: flex; flex-direction: column;
       gap: 12px;
+      padding-right: 16px;
+      margin-right: 0;
+      scrollbar-gutter: stable;
+    }
+    .settings-scroll::-webkit-scrollbar { width: 6px; }
+    .settings-scroll::-webkit-scrollbar-track { background: transparent; }
+    .settings-scroll::-webkit-scrollbar-thumb {
+      background: var(--bg-border); border-radius: 3px;
     }
     .field label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
     .field input {
@@ -480,23 +490,78 @@
 
     /* ====== Vault switcher / tags ====== */
     .vault-switch {
-      display: flex; align-items: center; gap: 6px;
-      margin-left: 10px; flex: 1; min-width: 0;
+      position: relative;
+      display: flex; align-items: center;
+      margin-left: 10px; flex: 1; min-width: 0; max-width: 150px;
+      -webkit-app-region: no-drag; app-region: no-drag;
     }
-    .vault-switch select {
-      max-width: 140px; height: 26px; padding: 0 8px;
-      border-radius: 6px; border: 1px solid var(--border);
-      background: var(--bg-elevated); color: var(--text-primary);
-      font-size: 11px; outline: none;
+    .vault-dd-btn {
+      display: flex; align-items: center; gap: 4px;
+      max-width: 100%; width: 100%; height: 26px;
+      padding: 0 8px 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--bg-border);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      font-size: 11px; font-family: inherit;
+      cursor: pointer; outline: none;
+      color-scheme: dark;
     }
-    .vault-switch select:focus { border-color: var(--accent); }
+    .vault-dd-btn:hover, .vault-dd-btn[aria-expanded="true"] {
+      border-color: var(--accent);
+    }
+    .vault-dd-label {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space:nowrap;
+      text-align: left; color: var(--text-primary);
+    }
+    .vault-dd-caret {
+      width: 12px; height: 12px; flex-shrink: 0;
+      color: var(--accent); opacity: 0.9;
+    }
+    .vault-dd-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      min-width: 140px; max-height: 180px; overflow-y: auto;
+      margin: 0; padding: 4px;
+      list-style: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      z-index: 80;
+      color-scheme: dark;
+    }
+    .vault-dd-menu[hidden] { display: none !important; }
+    .vault-dd-menu li {
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 11px;
+      color: var(--text-primary);
+      cursor: pointer;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .vault-dd-menu li:hover {
+      background: rgba(124, 106, 247, 0.28);
+      color: #ffffff;
+    }
+    .vault-dd-menu li[aria-selected="true"] {
+      background: rgba(124, 106, 247, 0.38);
+      color: #ffffff;
+    }
+    .vault-dd-menu li[aria-selected="true"] .star,
+    .vault-dd-menu li:hover .star { color: #c4b5fd; }
+    .vault-dd-menu li .star { color: var(--accent); }
     .hist-filters {
       display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
     }
     .hist-filters select {
       height: 36px; padding: 0 10px; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg-elevated);
+      border: 1px solid var(--bg-border); background: var(--bg-elevated);
       color: var(--text-primary); font-size: 12px; outline: none;
+      color-scheme: dark;
+    }
+    .hist-filters select option {
+      background: var(--bg-elevated); color: var(--text-primary);
     }
     .hist-filters .search-wrap { flex: 1; margin-bottom: 0; }
     .vault-tag {
@@ -504,16 +569,19 @@
       border-radius: 4px; background: rgba(139,92,246,.18);
       color: var(--accent); margin-left: 6px; vertical-align: middle;
     }
-    .vault-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .vault-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
     .vault-row {
       display: flex; align-items: center; gap: 8px;
-      padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+      padding: 10px 12px 10px 10px; border-radius: 8px; border: 1px solid var(--border);
       background: var(--bg-elevated);
     }
     .vault-row .vr-info { flex: 1; min-width: 0; }
     .vault-row .vr-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
     .vault-row .vr-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-    .vault-row .vr-actions { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+    .vault-row .vr-actions {
+      display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
+      flex-shrink: 0; max-width: 55%;
+    }
     .vault-row .vr-actions button {
       height: 26px; padding: 0 8px; font-size: 11px; border-radius: 6px;
       border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
@@ -550,8 +618,12 @@
   <!-- Title bar -->
   <div class="titlebar">
     <div class="logo"><span class="r2">r2</span><span class="share">share</span></div>
-    <div class="vault-switch" title="Active vault">
-      <select id="vault-select" aria-label="Active vault"></select>
+    <div class="vault-switch">
+      <button type="button" class="vault-dd-btn" id="vault-dd-btn" aria-label="Active vault" aria-haspopup="listbox" aria-expanded="false">
+        <span class="vault-dd-label" id="vault-dd-label">(no vaults)</span>
+        <svg class="vault-dd-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <ul class="vault-dd-menu" id="vault-dd-menu" role="listbox" hidden></ul>
     </div>
     <div class="win-controls">
       <button class="win-btn" id="btn-minimize" aria-label="Minimize" title="Minimize">
@@ -680,6 +752,7 @@
           <input type="checkbox" id="chk-include-secrets" checked />
           Include secret keys on export
         </label>
+        <p class="settings-note">Exported file contains your R2 secret keys — keep it private.</p>
         <p class="settings-note">Import asks overwrite vs skip when a vault name already exists.</p>
         <div class="settings-status" id="settings-status"></div>
       </div>
@@ -1334,15 +1407,49 @@
     fillVaultSelects();
   }
 
+  function vaultLabel(v) {
+    return escHtml(v.name) + (v.is_default ? ' <span class="star">★</span>' : '');
+  }
+
+  function closeVaultDropdown() {
+    const btn = $('vault-dd-btn');
+    const menu = $('vault-dd-menu');
+    if (!btn || !menu) return;
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+
+  function openVaultDropdown() {
+    const btn = $('vault-dd-btn');
+    const menu = $('vault-dd-menu');
+    if (!btn || !menu) return;
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
   function fillVaultSelects() {
-    const sel = $('vault-select');
+    const label = $('vault-dd-label');
+    const menu = $('vault-dd-menu');
     const hist = $('history-vault-filter');
-    if (!sel) return;
     const cur = state.activeVault;
-    sel.innerHTML = state.vaults.map(v => {
-      const mark = v.is_default ? ' ★' : '';
-      return `<option value="${escHtml(v.name)}"${v.name === cur ? ' selected' : ''}>${escHtml(v.name)}${mark}</option>`;
-    }).join('') || '<option value="">(no vaults)</option>';
+    const curVault = state.vaults.find(v => v.name === cur) || state.vaults.find(v => v.is_default) || state.vaults[0];
+    if (label) {
+      if (curVault) {
+        label.innerHTML = escHtml(curVault.name) + (curVault.is_default ? ' ★' : '');
+      } else {
+        label.textContent = '(no vaults)';
+      }
+    }
+    if (menu) {
+      if (!state.vaults.length) {
+        menu.innerHTML = '<li role="option" aria-disabled="true">(no vaults)</li>';
+      } else {
+        menu.innerHTML = state.vaults.map(v => {
+          const sel = v.name === cur ? 'true' : 'false';
+          return `<li role="option" data-name="${escHtml(v.name)}" aria-selected="${sel}">${vaultLabel(v)}</li>`;
+        }).join('');
+      }
+    }
     if (hist) {
       const hv = state.historyVault;
       hist.innerHTML = `<option value="">All</option>` + state.vaults.map(v =>
@@ -1351,9 +1458,9 @@
     }
   }
 
-  $('vault-select').addEventListener('change', async e => {
-    const name = e.target.value;
+  async function switchVault(name) {
     if (!name) return;
+    closeVaultDropdown();
     try {
       await invoke('set_default_vault', { name });
       state.activeVault = name;
@@ -1362,6 +1469,24 @@
       alert('Could not switch vault: ' + err);
       fillVaultSelects();
     }
+  }
+
+  $('vault-dd-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = $('vault-dd-menu');
+    if (menu.hidden) openVaultDropdown();
+    else closeVaultDropdown();
+  });
+
+  $('vault-dd-menu').addEventListener('click', e => {
+    const li = e.target.closest('li[data-name]');
+    if (!li) return;
+    switchVault(li.dataset.name);
+  });
+
+  document.addEventListener('click', e => {
+    const wrap = e.target.closest('.vault-switch');
+    if (!wrap) closeVaultDropdown();
   });
 
   $('history-vault-filter').addEventListener('change', e => {
