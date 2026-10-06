@@ -7,17 +7,17 @@ use tauri::{
 use tokio::sync::Mutex;
 
 mod commands;
-mod config;
-mod db;
-mod r2;
+pub mod config;
+pub mod db;
+pub mod r2;
 
-use config::Config;
+use config::AppConfig;
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
 pub struct AppState {
     pub db: Mutex<Connection>,
-    pub config: Mutex<Config>,
+    pub app_config: Mutex<AppConfig>,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -30,17 +30,15 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().expect("No app data dir");
             std::fs::create_dir_all(&data_dir).expect("Cannot create data dir");
 
-            let db_path = data_dir.join("r2share.db");
-            let conn = Connection::open(&db_path).expect("Failed to open SQLite database");
-            db::init(&conn).expect("Failed to initialise database schema");
+            let conn = db::open(&data_dir).expect("Failed to open SQLite database");
 
-            // ── Config ────────────────────────────────────────────────────────
-            let config = Config::load(&data_dir);
-            let is_configured = config.is_configured();
+            // ── Config (v2; transparent v1 migration) ─────────────────────────
+            let app_config = config::load(&data_dir);
+            let is_configured = app_config.default_flat().is_configured();
 
             app.manage(AppState {
                 db: Mutex::new(conn),
-                config: Mutex::new(config),
+                app_config: Mutex::new(app_config),
             });
 
             // Hide-on-blur is skipped on Linux: the tray menu / WM steals focus
@@ -153,6 +151,8 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::test_connection,
+            commands::export_vaults,
+            commands::import_vaults,
             commands::hide_window,
             commands::minimize_window,
             commands::read_clipboard_text,
