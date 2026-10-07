@@ -103,10 +103,13 @@ impl R2Client {
             .map_err(|e| format!("Cannot read file: {}", e))?
             .len();
 
-        let display_name = p
+        // Visible history name matches the object key's filename (conflict
+        // suffixes included). Sync keys are nested (`folder/rel/file.ext`);
+        // basename still matches the local file name.
+        let display_name = Path::new(key)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("file")
+            .unwrap_or(key)
             .to_string();
 
         let content_type = mime_guess::from_path(p).first_or_octet_stream().to_string();
@@ -176,6 +179,64 @@ impl R2Client {
 
     pub fn public_url(&self, key: &str) -> String {
         format!("{}/{}", self.public_url_base, key)
+    }
+
+    /// True when an object already exists at `key` (HeadObject).
+    pub async fn object_exists(&self, key: &str) -> Result<bool, String> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                let typed_not_found = err
+                    .as_service_error()
+                    .map(|e| e.is_not_found())
+                    .unwrap_or(false);
+                // R2/S3 may surface a bare 404 without the typed NotFound variant.
+                let status_404 = err
+                    .raw_response()
+                    .map(|r| r.status().as_u16() == 404)
+                    .unwrap_or(false);
+                if typed_not_found || status_404 {
+                    Ok(false)
+                } else {
+                    Err(format!(
+                        "Existence check failed: {}",
+                        DisplayErrorContext(&err)
+                    ))
+                }
+            }
+        }
+    }
+
+    /// First free visible key for `desired_filename`, skipping `ignore_key`
+    /// (used on rename so the object's current name stays available).
+    pub async fn allocate_key(
+        &self,
+        desired_filename: &str,
+        ignore_key: Option<&str>,
+    ) -> Result<String, String> {
+        let name = sanitize_file_name(desired_filename)?;
+        let (stem, ext) = split_stem_ext(&name);
+        let ext = ext.as_deref();
+
+        for n in 0..=MAX_NAME_CONFLICTS {
+            let key = keyed_filename(&stem, ext, if n == 0 { None } else { Some(n) });
+            if ignore_key == Some(key.as_str()) {
+                return Ok(key);
+            }
+            if !self.object_exists(&key).await? {
+                return Ok(key);
+            }
+        }
+        Err(format!(
+            "Too many files named like \"{name}\" (limit {MAX_NAME_CONFLICTS}). Rename or delete older copies."
+        ))
     }
 
     // ── private ──────────────────────────────────────────────────────────────
@@ -366,58 +427,66 @@ async fn upload_part(
     }
 }
 
-// ── key generation ────────────────────────────────────────────────────────────
+// ── key generation (manual uploads / rename) ─────────────────────────────────
 
-/// Generate a collision-resistant R2 object key.
-/// Pattern: `{unix_ms}-{6_random_alphanum}.{ext}`
-pub fn generate_key(ext: &str) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+/// Max `(N)` suffix before allocate gives up.
+const MAX_NAME_CONFLICTS: u32 = 9999;
 
-    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let suffix: String = (0..6)
-        .map(|_| {
-            let idx = (rand::random::<u8>() as usize) % CHARS.len();
-            CHARS[idx] as char
-        })
-        .collect();
+/// Pure allocator: desired display filename → first free object key.
+/// Pattern: `name.ext` → `name (1).ext` → `name (2).ext` … up to 9999.
+/// `exists` returns true when that key is already taken.
+pub fn allocate_unique_key(
+    desired_filename: &str,
+    exists: impl Fn(&str) -> bool,
+) -> Result<String, String> {
+    let name = sanitize_file_name(desired_filename)?;
+    let (stem, ext) = split_stem_ext(&name);
+    let ext = ext.as_deref();
 
-    format!("{}-{}.{}", ms, suffix, ext)
+    for n in 0..=MAX_NAME_CONFLICTS {
+        let key = keyed_filename(&stem, ext, if n == 0 { None } else { Some(n) });
+        if !exists(&key) {
+            return Ok(key);
+        }
+    }
+    Err(format!(
+        "Too many files named like \"{name}\" (limit {MAX_NAME_CONFLICTS}). Rename or delete older copies."
+    ))
 }
 
-/// Generate a collision-resistant key that keeps the saved filename visible.
-pub fn generate_named_key(display_name: &str) -> Result<String, String> {
-    let name = sanitize_file_name(display_name)?;
-    Ok(format!("{}-{}", key_prefix(), name))
+fn keyed_filename(stem: &str, ext: Option<&str>, conflict: Option<u32>) -> String {
+    match (ext, conflict) {
+        (Some(e), None) => format!("{stem}.{e}"),
+        (Some(e), Some(n)) => format!("{stem} ({n}).{e}"),
+        (None, None) => stem.to_string(),
+        (None, Some(n)) => format!("{stem} ({n})"),
+    }
 }
 
-fn key_prefix() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let suffix: String = (0..6)
-        .map(|_| {
-            let idx = (rand::random::<u8>() as usize) % CHARS.len();
-            CHARS[idx] as char
-        })
-        .collect();
-
-    format!("{}-{}", ms, suffix)
+fn split_stem_ext(filename: &str) -> (String, Option<String>) {
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("file")
+        .to_string();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_string());
+    (stem, ext)
 }
 
-fn sanitize_file_name(display_name: &str) -> Result<String, String> {
+/// Sanitize a user/local filename for use as a visible R2 object key.
+/// Allows spaces and parentheses so `name (1).ext` round-trips.
+pub fn sanitize_file_name(display_name: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut last_was_dash = false;
 
     for ch in display_name.trim().chars() {
-        let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-');
+        let allowed =
+            ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ' ' | '(' | ')');
         let replacement = !allowed;
 
         if replacement {
@@ -436,5 +505,62 @@ fn sanitize_file_name(display_name: &str) -> Result<String, String> {
         Err("Enter a filename before saving.".to_string())
     } else {
         Ok(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn allocate_returns_desired_when_free() {
+        let key = allocate_unique_key("photo.jpg", |_| false).unwrap();
+        assert_eq!(key, "photo.jpg");
+    }
+
+    #[test]
+    fn allocate_appends_numeric_suffix_on_conflict() {
+        let taken: HashSet<&str> = ["photo.jpg", "photo (1).jpg"].into();
+        let key = allocate_unique_key("photo.jpg", |k| taken.contains(k)).unwrap();
+        assert_eq!(key, "photo (2).jpg");
+    }
+
+    #[test]
+    fn allocate_preserves_spaces_and_parens_in_sanitize() {
+        let key = allocate_unique_key("my photo (final).png", |_| false).unwrap();
+        assert_eq!(key, "my photo (final).png");
+    }
+
+    #[test]
+    fn allocate_handles_extensionless_names() {
+        let taken: HashSet<&str> = ["README"].into();
+        let key = allocate_unique_key("README", |k| taken.contains(k)).unwrap();
+        assert_eq!(key, "README (1)");
+    }
+
+    #[test]
+    fn allocate_uses_path_stem_and_extension() {
+        let taken: HashSet<&str> = ["archive.tar.gz"].into();
+        let key = allocate_unique_key("archive.tar.gz", |k| taken.contains(k)).unwrap();
+        // Path::extension → "gz", file_stem → "archive.tar"
+        assert_eq!(key, "archive.tar (1).gz");
+    }
+
+    #[test]
+    fn allocate_errors_when_cap_exhausted() {
+        let err = allocate_unique_key("x.bin", |_| true).unwrap_err();
+        assert!(err.contains("9999"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn sanitize_rejects_empty_after_cleanup() {
+        assert!(sanitize_file_name("***").is_err());
+        assert!(sanitize_file_name("   ").is_err());
+    }
+
+    #[test]
+    fn sanitize_replaces_disallowed_chars() {
+        assert_eq!(sanitize_file_name("a/b:c?.txt").unwrap(), "a-b-c-.txt");
     }
 }
