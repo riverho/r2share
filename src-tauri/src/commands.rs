@@ -198,9 +198,81 @@ pub async fn test_connection(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub async fn hide_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("main") {
+        // Linux: minimise instead of hiding so the dock/taskbar entry stays
+        // and the window can be restored from it (tray hosts are unreliable).
+        #[cfg(target_os = "linux")]
+        w.minimize().map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "linux"))]
         w.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+// ── Native clipboard (Linux) ──────────────────────────────────────────────────
+// WebKitGTK 2.54 segfaults inside its gtk_clipboard_request_targets callback
+// when its built-in paste runs, so the frontend bypasses it on Linux and reads
+// the clipboard through GTK here instead.
+
+#[cfg(target_os = "linux")]
+async fn on_main<T: Send + 'static>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())
+}
+
+/// True for leftover VNC clipboard test tokens like "pasted-from-vnc-123".
+pub fn is_vnc_test_token(text: &str) -> bool {
+    let t = text.trim();
+    t.len() > 16
+        && t[..16].eq_ignore_ascii_case("pasted-from-vnc-")
+        && t[16..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Returns clipboard text, or None if the clipboard holds no text.
+#[tauri::command]
+pub async fn read_clipboard_text(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        return on_main(&app, || {
+            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+                .wait_for_text()
+                .map(|s| s.to_string())
+                .filter(|s| !is_vnc_test_token(s))
+        })
+        .await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Err("native clipboard read is only used on Linux".into())
+    }
+}
+
+/// Returns a clipboard image as base64 PNG, or None if there is no image.
+#[tauri::command]
+pub async fn read_clipboard_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use base64::Engine;
+        let png = on_main(&app, || {
+            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+                .wait_for_image()
+                .and_then(|pb| pb.save_to_bufferv("png", &[]).ok())
+        })
+        .await?;
+        return Ok(png.map(|b| base64::engine::general_purpose::STANDARD.encode(b)));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Err("native clipboard read is only used on Linux".into())
+    }
 }
 
 #[tauri::command]
