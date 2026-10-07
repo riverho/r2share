@@ -12,6 +12,10 @@ crate-type = ["rlib"]
 name = "r2share"
 path = "src/main.rs"
 
+[[bin]]
+name = "r2share-cli"
+path = "src/bin/r2share_cli.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -29,6 +33,8 @@ base64           = "0.22"
 mime_guess       = "2"
 rand             = "0.8"
 fs2             = "0.4.3"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+indicatif = "0.18.6"
 
 # Linux: native clipboard reads (WebKitGTK's own paste path segfaults)
 [target.'cfg(target_os = "linux")'.dependencies]

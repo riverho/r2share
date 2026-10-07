@@ -106,7 +106,7 @@ impl Vault {
         v
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("vault name must not be empty".into());
         }
@@ -521,7 +521,7 @@ pub fn import_vaults(
         match cfg.vault_by_name_mut(&vault.name) {
             Some(existing) => match mode {
                 ImportMode::Overwrite => {
-                    *existing = vault;
+                    merge_vault_preserve_secrets(existing, vault);
                     overwritten += 1;
                 }
                 ImportMode::SkipExisting => {
@@ -549,6 +549,23 @@ pub fn import_vaults(
         skipped,
         overwritten,
     })
+}
+
+
+/// Overwrite vault fields, but keep existing access/secret keys when the
+/// incoming values are empty (so a `--no-secrets` export cannot wipe keys).
+fn merge_vault_preserve_secrets(existing: &mut Vault, incoming: Vault) {
+    let keep_access = incoming.access_key_id.is_empty();
+    let keep_secret = incoming.secret_access_key.is_empty();
+    let preserved_access = existing.access_key_id.clone();
+    let preserved_secret = existing.secret_access_key.clone();
+    *existing = incoming;
+    if keep_access {
+        existing.access_key_id = preserved_access;
+    }
+    if keep_secret {
+        existing.secret_access_key = preserved_secret;
+    }
 }
 
 fn parse_import_bundle(raw: &str) -> Result<VaultBundle, String> {
@@ -836,4 +853,38 @@ mod tests {
         assert!(flat.is_configured());
         assert_eq!(flat.account_id, "acct-fake-111");
     }
+
+    #[test]
+    fn import_overwrite_preserves_secrets_when_incoming_empty() {
+        let dir = tmp_dir("import-preserve");
+        save(&dir, &AppConfig::from_v1(fake_v1())).unwrap();
+
+        let bundle = VaultBundle {
+            version: 2,
+            vaults: vec![{
+                let mut v = Vault::new("default");
+                v.account_id = "acct-new".into();
+                v.bucket = "bucket-new".into();
+                v.public_url_base = "https://new.example".into();
+                // access_key_id / secret_access_key left empty (no-secrets export)
+                v
+            }],
+        };
+        let import_path = dir.join("nosecrets.json");
+        fs::write(&import_path, serde_json::to_string_pretty(&bundle).unwrap()).unwrap();
+
+        let result = import_vaults(&dir, &import_path, ImportMode::Overwrite).unwrap();
+        assert_eq!(result.overwritten, 1);
+
+        let after = load(&dir);
+        let v = after.vault_by_name("default").unwrap();
+        assert_eq!(v.account_id, "acct-new");
+        assert_eq!(v.bucket, "bucket-new");
+        assert_eq!(v.public_url_base, "https://new.example");
+        assert_eq!(v.access_key_id, "AKIAFAKEEXAMPLE");
+        assert_eq!(v.secret_access_key, "secret/fake/example/key");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
 }

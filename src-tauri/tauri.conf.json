@@ -4,7 +4,10 @@
   "version": "0.1.1",
   "identifier": "com.summonai.r2share",
   "build": {
-    "frontendDist": ["../index.html"]
+    "frontendDist": [
+      "../index.html"
+    ],
+    "beforeBundleCommand": "cargo build --release --bin r2share-cli --manifest-path src-tauri/Cargo.toml"
   },
   "app": {
     "withGlobalTauri": true,
@@ -35,6 +38,18 @@
       "icons/128x128@2x.png",
       "icons/icon.ico",
       "icons/icon.icns"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/bin/r2share-cli": "target/release/r2share-cli"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/bin/r2share-cli": "target/release/r2share-cli"
+        }
+      }
+    }
   }
 }
