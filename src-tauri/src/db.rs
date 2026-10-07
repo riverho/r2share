@@ -1,5 +1,9 @@
+//! Local upload history (SQLite). Openable from a data-dir path for CLI reuse.
+
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::time::Duration;
 
 /// A row in the uploads history table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,8 +22,19 @@ pub struct FileRecord {
     pub uploaded_at: i64,
 }
 
-/// Create tables if they don't exist yet.
+/// Open (or create) the history DB under `data_dir`, apply pragmas, and init schema.
+pub fn open(data_dir: &Path) -> Result<Connection> {
+    let _ = std::fs::create_dir_all(data_dir);
+    let conn = Connection::open(data_dir.join("r2share.db"))?;
+    init(&conn)?;
+    Ok(conn)
+}
+
+/// Apply WAL + busy timeout, then create tables if they don't exist yet.
 pub fn init(conn: &Connection) -> Result<()> {
+    // WAL lets the GUI and a future CLI share the DB with fewer writer stalls.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.busy_timeout(Duration::from_secs(5))?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS uploads (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +45,8 @@ pub fn init(conn: &Connection) -> Result<()> {
             url          TEXT    NOT NULL,
             uploaded_at  INTEGER NOT NULL
         );",
-    )
+    )?;
+    Ok(())
 }
 
 /// Insert a new upload record; returns the new row id.
@@ -120,4 +136,37 @@ pub fn rename(
 pub fn delete(conn: &Connection, key: &str) -> Result<()> {
     conn.execute("DELETE FROM uploads WHERE key = ?1", params![key])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn opens_in_wal_mode_with_busy_timeout() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("r2share-db-test-{nanos}"));
+        let conn = open(&dir).expect("open db");
+
+        let mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .expect("journal_mode");
+        assert_eq!(mode.to_ascii_lowercase(), "wal");
+
+        // busy_timeout is stored in milliseconds.
+        let timeout_ms: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("busy_timeout");
+        assert_eq!(timeout_ms, 5000);
+
+        insert(&conn, "k1", "a.txt", 1, "text/plain", "https://example/k1").unwrap();
+        assert_eq!(list(&conn).unwrap().len(), 1);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

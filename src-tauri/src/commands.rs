@@ -1,9 +1,10 @@
 use base64::Engine;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 
 use crate::{
-    config::Config,
+    config::{self, Config, ImportMode, ImportResult},
     db,
     r2::{generate_key, generate_named_key, ProgressFn, R2Client, UploadResult},
     AppState,
@@ -19,7 +20,7 @@ pub async fn upload_file(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<UploadResult, String> {
-    let config = state.config.lock().await.clone();
+    let config = state.app_config.lock().await.default_flat();
     require_configured(&config)?;
 
     let ext = std::path::Path::new(&path)
@@ -55,7 +56,7 @@ pub async fn upload_clipboard_image(
     mime_type: String,
     state: State<'_, AppState>,
 ) -> Result<UploadResult, String> {
-    let config = state.config.lock().await.clone();
+    let config = state.app_config.lock().await.default_flat();
     require_configured(&config)?;
 
     let ext = match mime_type.as_str() {
@@ -108,7 +109,7 @@ pub async fn list_files(state: State<'_, AppState>) -> Result<Vec<db::FileRecord
 /// If R2 credentials are not configured, only removes the local record.
 #[tauri::command]
 pub async fn delete_file(key: String, state: State<'_, AppState>) -> Result<(), String> {
-    let config = state.config.lock().await.clone();
+    let config = state.app_config.lock().await.default_flat();
 
     if config.is_configured() {
         let client = R2Client::new(&config).await?;
@@ -131,7 +132,7 @@ pub async fn rename_file(
         return Err("Enter a filename before saving.".to_string());
     }
 
-    let config = state.config.lock().await.clone();
+    let config = state.app_config.lock().await.default_flat();
     require_configured(&config)?;
 
     let old_record = {
@@ -165,32 +166,65 @@ pub async fn rename_file(
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-/// Return current config (all fields, including keys — shown masked in UI).
+/// Return the default vault as a flat Config (Settings UI unchanged).
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
-    Ok(state.config.lock().await.clone())
+    Ok(state.app_config.lock().await.default_flat())
 }
 
-/// Persist updated config and reload the in-memory copy.
+/// Persist updated default-vault credentials and reload the in-memory copy.
 #[tauri::command]
 pub async fn save_config(
     config: Config,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    config.save(&data_dir)?;
-    *state.config.lock().await = config;
+    let data_dir = app_data_dir(&app)?;
+    let mut app_cfg = state.app_config.lock().await;
+    app_cfg.set_default_flat(config);
+    config::save(&data_dir, &app_cfg)?;
     Ok(())
 }
 
-/// Verify R2 credentials by hitting HeadBucket.
+/// Verify R2 credentials by hitting HeadBucket on the default vault.
 #[tauri::command]
 pub async fn test_connection(state: State<'_, AppState>) -> Result<(), String> {
-    let config = state.config.lock().await.clone();
+    let config = state.app_config.lock().await.default_flat();
     require_configured(&config)?;
     let client = R2Client::new(&config).await?;
     client.test().await
+}
+
+/// Export vaults to a JSON file (0600 on Unix). No UI yet — for CLI / future Settings.
+#[tauri::command]
+pub async fn export_vaults(
+    path: String,
+    include_secrets: bool,
+    names: Option<Vec<String>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    config::export_vaults(&data_dir, PathBuf::from(path).as_path(), include_secrets, names)
+}
+
+/// Import vaults from a JSON file (`mode`: "overwrite" | "skip"). Refreshes in-memory config.
+#[tauri::command]
+pub async fn import_vaults(
+    path: String,
+    mode: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<ImportResult, String> {
+    let data_dir = app_data_dir(&app)?;
+    let import_mode = ImportMode::parse(&mode)?;
+    let result = config::import_vaults(&data_dir, PathBuf::from(path).as_path(), import_mode)?;
+    // Reload so the GUI sees merged vaults / default credentials.
+    *state.app_config.lock().await = config::load(&data_dir);
+    Ok(result)
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────

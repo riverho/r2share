@@ -28,6 +28,7 @@ rusqlite         = { version = "0.31", features = ["bundled"] }
 base64           = "0.22"
 mime_guess       = "2"
 rand             = "0.8"
+fs2             = "0.4.3"
 
 # Linux: native clipboard reads (WebKitGTK's own paste path segfaults)
 [target.'cfg(target_os = "linux")'.dependencies]
