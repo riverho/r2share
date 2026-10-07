@@ -1,6 +1,7 @@
 //! `r2share-cli` — clap-driven interface over config/db/r2 core.
 
 mod args;
+mod sync_cmd;
 
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -50,6 +51,10 @@ pub fn run() -> Result<(), String> {
         Commands::Vault { cmd } => {
             let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             rt.block_on(cmd_vault(&data_dir, cmd))
+        }
+        Commands::Sync { cmd } => {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+            rt.block_on(sync_cmd::cmd_sync(&data_dir, cmd))
         }
     }
 }

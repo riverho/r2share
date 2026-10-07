@@ -53,6 +53,7 @@ pub fn init(conn: &Connection) -> Result<()> {
         );",
     )?;
     migrate_add_vault_column(conn)?;
+    init_sync_state(conn)?;
     Ok(())
 }
 
@@ -189,6 +190,133 @@ pub fn rename(
 pub fn delete(conn: &Connection, key: &str) -> Result<()> {
     conn.execute("DELETE FROM uploads WHERE key = ?1", params![key])?;
     Ok(())
+}
+
+
+// ── sync_state (folder sync) ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStateRow {
+    pub vault: String,
+    pub path: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub sha256: Option<String>,
+    pub remote_key: Option<String>,
+    pub url: Option<String>,
+    pub synced_at: Option<i64>,
+    pub stale: bool,
+}
+
+fn init_sync_state(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_state (
+            path       TEXT    PRIMARY KEY NOT NULL,
+            vault      TEXT    NOT NULL,
+            size       INTEGER NOT NULL DEFAULT 0,
+            mtime      INTEGER NOT NULL DEFAULT 0,
+            sha256     TEXT,
+            remote_key TEXT,
+            url        TEXT,
+            synced_at  INTEGER,
+            stale      INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_state_vault ON sync_state(vault);",
+    )?;
+    Ok(())
+}
+
+pub fn sync_get(conn: &Connection, path: &str) -> Result<Option<SyncStateRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT vault, path, size, mtime, sha256, remote_key, url, synced_at, stale
+         FROM sync_state WHERE path = ?1",
+    )?;
+    let mut rows = stmt.query(params![path])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(SyncStateRow {
+            vault: row.get(0)?,
+            path: row.get(1)?,
+            size: row.get(2)?,
+            mtime: row.get(3)?,
+            sha256: row.get(4)?,
+            remote_key: row.get(5)?,
+            url: row.get(6)?,
+            synced_at: row.get(7)?,
+            stale: row.get::<_, i64>(8)? != 0,
+        })),
+        None => Ok(None),
+    }
+}
+
+pub fn sync_upsert_ok(
+    conn: &Connection,
+    vault: &str,
+    path: &str,
+    size: i64,
+    mtime: i64,
+    sha256: &str,
+    remote_key: &str,
+    url: &str,
+) -> Result<()> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO sync_state (path, vault, size, mtime, sha256, remote_key, url, synced_at, stale)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+         ON CONFLICT(path) DO UPDATE SET
+           vault = excluded.vault,
+           size = excluded.size,
+           mtime = excluded.mtime,
+           sha256 = excluded.sha256,
+           remote_key = excluded.remote_key,
+           url = excluded.url,
+           synced_at = excluded.synced_at,
+           stale = 0",
+        params![path, vault, size, mtime, sha256, remote_key, url, ts],
+    )?;
+    Ok(())
+}
+
+/// Mark a local path as gone without touching remote objects.
+pub fn sync_mark_stale(conn: &Connection, path: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE sync_state SET stale = 1 WHERE path = ?1",
+        params![path],
+    )?;
+    Ok(())
+}
+
+pub fn sync_list_for_vault(conn: &Connection, vault: &str) -> Result<Vec<SyncStateRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT vault, path, size, mtime, sha256, remote_key, url, synced_at, stale
+         FROM sync_state WHERE vault = ?1 ORDER BY path",
+    )?;
+    let rows = stmt
+        .query_map(params![vault], |row| {
+            Ok(SyncStateRow {
+                vault: row.get(0)?,
+                path: row.get(1)?,
+                size: row.get(2)?,
+                mtime: row.get(3)?,
+                sha256: row.get(4)?,
+                remote_key: row.get(5)?,
+                url: row.get(6)?,
+                synced_at: row.get(7)?,
+                stale: row.get::<_, i64>(8)? != 0,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn sync_count_active(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sync_state WHERE stale = 0",
+        [],
+        |row| row.get(0),
+    )
 }
 
 #[cfg(test)]

@@ -11,6 +11,8 @@ pub mod config;
 pub mod db;
 pub mod r2;
 pub mod cli;
+pub mod sync;
+mod sync_runtime;
 
 use config::AppConfig;
 
@@ -36,11 +38,20 @@ pub fn run() {
             // ── Config (v2; transparent v1 migration) ─────────────────────────
             let app_config = config::load(&data_dir);
             let is_configured = app_config.default_flat().is_configured();
+            let sync_maps = app_config.folder_mappings.clone();
 
             app.manage(AppState {
                 db: Mutex::new(conn),
                 app_config: Mutex::new(app_config),
             });
+
+            // Background one-way folder sync (advisory locks vs CLI).
+            let runtime = std::sync::Arc::new(sync_runtime::SyncRuntime::new(
+                data_dir.clone(),
+                sync_maps,
+            ));
+            runtime.start();
+            app.manage(runtime);
 
             // Hide-on-blur is skipped on Linux: the tray menu / WM steals focus
             // and the window would vanish right after being shown.
@@ -160,6 +171,12 @@ pub fn run() {
             commands::delete_vault,
             commands::export_vaults,
             commands::import_vaults,
+            commands::list_folder_mappings,
+            commands::add_folder_mapping,
+            commands::remove_folder_mapping,
+            commands::set_folder_mapping_paused,
+            commands::get_sync_status,
+            commands::suggested_sync_folder,
             commands::hide_window,
             commands::minimize_window,
             commands::read_clipboard_text,

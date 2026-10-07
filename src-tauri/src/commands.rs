@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 
 use crate::{
-    config::{self, AppConfig, Config, ImportMode, ImportResult, Vault},
+    config::{self, AppConfig, Config, FolderMapping, ImportMode, ImportResult, Vault},
     db,
     r2::{generate_key, generate_named_key, ProgressFn, R2Client, UploadResult},
     AppState,
@@ -38,6 +38,13 @@ fn require_configured(config: &Config) -> Result<(), String> {
         Err("R2 not configured. Open Settings and enter your credentials.".to_string())
     }
 }
+
+fn notify_sync_config_changed(app: &tauri::AppHandle, cfg: &AppConfig) {
+    if let Some(rt) = app.try_state::<crate::sync_runtime::SyncRuntime>() {
+        rt.on_config_changed(cfg.folder_mappings.clone());
+    }
+}
+
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
@@ -279,6 +286,7 @@ pub async fn save_config(
     let merged = preserve_blank_secrets(&existing, config);
     app_cfg.set_default_flat(merged);
     config::save(&data_dir, &app_cfg)?;
+    notify_sync_config_changed(&app, &app_cfg);
     Ok(())
 }
 
@@ -336,6 +344,7 @@ pub async fn set_default_vault(
     }
     cfg.default_vault = name;
     config::save(&data_dir, &cfg)?;
+    notify_sync_config_changed(&app, &cfg);
     Ok(())
 }
 
@@ -364,6 +373,7 @@ pub async fn add_vault(
     }
     cfg.validate()?;
     config::save(&data_dir, &cfg)?;
+    notify_sync_config_changed(&app, &cfg);
     Ok(())
 }
 
@@ -388,6 +398,7 @@ pub async fn update_vault(
     v.validate()?;
     cfg.validate()?;
     config::save(&data_dir, &cfg)?;
+    notify_sync_config_changed(&app, &cfg);
     Ok(())
 }
 
@@ -409,7 +420,10 @@ pub async fn delete_vault(
     if cfg.default_vault == name {
         cfg.default_vault = cfg.vaults[0].name.clone();
     }
+    // Drop mappings that pointed at the deleted vault (validate would fail otherwise).
+    cfg.folder_mappings.retain(|m| m.vault != name);
     config::save(&data_dir, &cfg)?;
+    notify_sync_config_changed(&app, &cfg);
     Ok(())
 }
 
@@ -441,8 +455,133 @@ pub async fn import_vaults(
     let data_dir = app_data_dir(&app)?;
     let import_mode = ImportMode::parse(&mode)?;
     let result = config::import_vaults(&data_dir, PathBuf::from(path).as_path(), import_mode)?;
-    *state.app_config.lock().await = config::load(&data_dir);
+    let loaded = config::load(&data_dir);
+    notify_sync_config_changed(&app, &loaded);
+    *state.app_config.lock().await = loaded;
     Ok(result)
+}
+
+
+// ── Folder sync ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FolderMappingInfo {
+    pub path: String,
+    pub vault: String,
+    pub paused: bool,
+}
+
+#[tauri::command]
+pub async fn list_folder_mappings(
+    state: State<'_, AppState>,
+) -> Result<Vec<FolderMappingInfo>, String> {
+    let cfg = state.app_config.lock().await;
+    Ok(cfg
+        .folder_mappings
+        .iter()
+        .map(|m| FolderMappingInfo {
+            path: m.path.clone(),
+            vault: m.vault.clone(),
+            paused: m.paused,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn add_folder_mapping(
+    path: String,
+    vault: Option<String>,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<FolderMappingInfo, String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    let vault_name = vault.unwrap_or_else(|| cfg.default_vault.clone());
+    if cfg.vault_by_name(&vault_name).is_none() {
+        return Err(format!("vault not found: {vault_name}"));
+    }
+    let p = PathBuf::from(&path);
+    std::fs::create_dir_all(&p).map_err(|e| format!("create {}: {e}", p.display()))?;
+    let canon = p
+        .canonicalize()
+        .map_err(|e| format!("canonicalize {}: {e}", p.display()))?;
+    let path_s = canon.display().to_string();
+    if cfg.folder_mappings.iter().any(|m| m.path == path_s) {
+        return Err(format!("mapping already exists: {path_s}"));
+    }
+    let mapping = FolderMapping::new(path_s.clone(), vault_name.clone());
+    cfg.folder_mappings.push(mapping.clone());
+    cfg.validate()?;
+    config::save(&data_dir, &cfg)?;
+    if let Some(rt) = app.try_state::<crate::sync_runtime::SyncRuntime>() {
+        rt.on_config_changed(cfg.folder_mappings.clone());
+    }
+    Ok(FolderMappingInfo {
+        path: path_s,
+        vault: vault_name,
+        paused: false,
+    })
+}
+
+#[tauri::command]
+pub async fn remove_folder_mapping(
+    path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    let before = cfg.folder_mappings.len();
+    cfg.folder_mappings.retain(|m| m.path != path);
+    if cfg.folder_mappings.len() == before {
+        return Err(format!("mapping not found: {path}"));
+    }
+    config::save(&data_dir, &cfg)?;
+    if let Some(rt) = app.try_state::<crate::sync_runtime::SyncRuntime>() {
+        rt.on_config_changed(cfg.folder_mappings.clone());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_folder_mapping_paused(
+    path: String,
+    paused: bool,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    let m = cfg
+        .folder_mappings
+        .iter_mut()
+        .find(|m| m.path == path)
+        .ok_or_else(|| format!("mapping not found: {path}"))?;
+    m.paused = paused;
+    config::save(&data_dir, &cfg)?;
+    if let Some(rt) = app.try_state::<crate::sync_runtime::SyncRuntime>() {
+        rt.on_config_changed(cfg.folder_mappings.clone());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_sync_status(app: tauri::AppHandle) -> Result<crate::sync::SyncStatus, String> {
+    if let Some(rt) = app.try_state::<crate::sync_runtime::SyncRuntime>() {
+        Ok(rt.status.get())
+    } else {
+        Ok(crate::sync::SyncStatus {
+            state: "idle".into(),
+            syncing_n: 0,
+            last_error: None,
+            last_synced_at: None,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn suggested_sync_folder() -> Result<String, String> {
+    Ok(config::DEFAULT_SYNC_FOLDER.to_string())
 }
 
 #[cfg(test)]
