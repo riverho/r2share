@@ -1,21 +1,34 @@
 {
   "project": "r2share",
   "repository": "https://github.com/riverho/r2share",
-  "branch": "main",
+  "branch": "docs-release-prep",
   "release": {
-    "version": "0.1.1",
-    "tag": "v0.1.1",
-    "status": "frozen",
-    "date": "2026-10-05",
-    "timezone": "Asia/Shanghai"
+    "version": "0.2.0",
+    "tag": "v0.2.0",
+    "status": "prep",
+    "note": "Docs and version bump stacked on folder-sync (a04d2e6). Not a published release; awaiting user approval before push/tag/release.",
+    "date": "2026-10-07",
+    "timezone": "Asia/Shanghai",
+    "basedOn": {
+      "branch": "folder-sync",
+      "commit": "a04d2e6fc8c045ccda03ffd472fdc22b854b2c29"
+    }
   },
   "build": {
+    "linux": "npm run build",
     "windows": "npm run desktop:build:win",
-    "artifacts": [
-      "src-tauri/target/release/r2share.exe",
-      "src-tauri/target/release/bundle/nsis/r2share_0.1.1_x64-setup.exe",
-      "src-tauri/target/release/bundle/msi/r2share_0.1.1_x64_en-US.msi"
-    ]
+    "artifacts": {
+      "linux": [
+        "src-tauri/target/release/r2share",
+        "src-tauri/target/release/r2share-cli",
+        "src-tauri/target/release/bundle/deb/r2share_0.2.0_amd64.deb"
+      ],
+      "windows": [
+        "src-tauri/target/release/r2share.exe",
+        "src-tauri/target/release/bundle/nsis/r2share_0.2.0_x64-setup.exe",
+        "src-tauri/target/release/bundle/msi/r2share_0.2.0_x64_en-US.msi"
+      ]
+    }
   },
   "sourcePolicy": {
     "tracked": [
@@ -30,7 +43,8 @@
       "src-tauri/capabilities/",
       "src-tauri/icons/",
       "src-tauri/src/",
-      "version-control.json"
+      "version-control.json",
+      ".gitignore"
     ],
     "ignored": [
       "node_modules/",
@@ -38,7 +52,9 @@
       "src-tauri/gen/",
       "internal markdown docs except README.md",
       "agent memory and guardrail files",
-      "local setup helpers"
+      "local setup helpers",
+      "env/credential dumps",
+      "smoke-test and screenshot scratch under repo"
     ]
   }
 }
