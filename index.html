@@ -19,6 +19,8 @@
       --success: #3ecf8e;
       --error: #f87171;
       --warning: #fbbf24;
+      --border: var(--bg-border);
+      --danger: var(--error);
 
       --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
       --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
@@ -422,7 +424,7 @@
     .settings-panel {
       position: absolute;
       left: 0; right: 0; bottom: 0;
-      height: 360px;
+      height: 390px;
       background: var(--bg-surface);
       border-top: 1px solid var(--bg-border);
       border-radius: 12px 12px 0 0;
@@ -449,6 +451,14 @@
       flex: 1; overflow-y: auto;
       display: flex; flex-direction: column;
       gap: 12px;
+      padding-right: 16px;
+      margin-right: 0;
+      scrollbar-gutter: stable;
+    }
+    .settings-scroll::-webkit-scrollbar { width: 6px; }
+    .settings-scroll::-webkit-scrollbar-track { background: transparent; }
+    .settings-scroll::-webkit-scrollbar-thumb {
+      background: var(--bg-border); border-radius: 3px;
     }
     .field label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
     .field input {
@@ -477,6 +487,126 @@
     .settings-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
 
     /* ====== Utility ====== */
+
+    /* ====== Vault switcher / tags ====== */
+    .vault-switch {
+      position: relative;
+      display: flex; align-items: center;
+      margin-left: 10px; flex: 1; min-width: 0; max-width: 150px;
+      -webkit-app-region: no-drag; app-region: no-drag;
+    }
+    .vault-dd-btn {
+      display: flex; align-items: center; gap: 4px;
+      max-width: 100%; width: 100%; height: 26px;
+      padding: 0 8px 0 10px;
+      border-radius: 6px;
+      border: 1px solid var(--bg-border);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      font-size: 11px; font-family: inherit;
+      cursor: pointer; outline: none;
+      color-scheme: dark;
+    }
+    .vault-dd-btn:hover, .vault-dd-btn[aria-expanded="true"] {
+      border-color: var(--accent);
+    }
+    .vault-dd-label {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space:nowrap;
+      text-align: left; color: var(--text-primary);
+    }
+    .vault-dd-caret {
+      width: 12px; height: 12px; flex-shrink: 0;
+      color: var(--accent); opacity: 0.9;
+    }
+    .vault-dd-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      min-width: 140px; max-height: 180px; overflow-y: auto;
+      margin: 0; padding: 4px;
+      list-style: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      z-index: 80;
+      color-scheme: dark;
+    }
+    .vault-dd-menu[hidden] { display: none !important; }
+    .vault-dd-menu li {
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 11px;
+      color: var(--text-primary);
+      cursor: pointer;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .vault-dd-menu li:hover {
+      background: rgba(124, 106, 247, 0.28);
+      color: #ffffff;
+    }
+    .vault-dd-menu li[aria-selected="true"] {
+      background: rgba(124, 106, 247, 0.38);
+      color: #ffffff;
+    }
+    .vault-dd-menu li[aria-selected="true"] .star,
+    .vault-dd-menu li:hover .star { color: #c4b5fd; }
+    .vault-dd-menu li .star { color: var(--accent); }
+    .hist-filters {
+      display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+    }
+    .hist-filters select {
+      height: 36px; padding: 0 10px; border-radius: 8px;
+      border: 1px solid var(--bg-border); background: var(--bg-elevated);
+      color: var(--text-primary); font-size: 12px; outline: none;
+      color-scheme: dark;
+    }
+    .hist-filters select option {
+      background: var(--bg-elevated); color: var(--text-primary);
+    }
+    .hist-filters .search-wrap { flex: 1; margin-bottom: 0; }
+    .vault-tag {
+      display: inline-block; font-size: 10px; padding: 1px 6px;
+      border-radius: 4px; background: rgba(139,92,246,.18);
+      color: var(--accent); margin-left: 6px; vertical-align: middle;
+    }
+    .vault-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+    .vault-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px 10px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-elevated);
+    }
+    .vault-row .vr-info { flex: 1; min-width: 0; }
+    .vault-row .vr-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .vault-row .vr-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .vault-row .vr-actions {
+      display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
+      flex-shrink: 0; max-width: 55%;
+    }
+    .vault-row .vr-actions button {
+      height: 26px; padding: 0 8px; font-size: 11px; border-radius: 6px;
+      border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .vault-row .vr-actions button:hover { color: var(--text-primary); border-color: var(--accent); }
+    .vault-row .vr-actions button.danger:hover { color: var(--danger); border-color: var(--danger); }
+    .badge-default {
+      font-size: 10px; padding: 1px 6px; border-radius: 4px;
+      background: rgba(139,92,246,.25); color: var(--accent); margin-left: 6px;
+    }
+    .settings-subview { display: none; }
+    .settings-subview.active { display: block; }
+    .io-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .io-row button { flex: 1; min-width: 100px; }
+    .check-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--text-secondary); margin: 8px 0;
+    }
+    .settings-status {
+      font-size: 12px; color: var(--text-muted); margin-top: 8px; min-height: 16px;
+    }
+    .settings-status.ok { color: var(--success); }
+    .settings-status.err { color: var(--danger); }
+
     .hidden { display: none !important; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -488,6 +618,13 @@
   <!-- Title bar -->
   <div class="titlebar">
     <div class="logo"><span class="r2">r2</span><span class="share">share</span></div>
+    <div class="vault-switch">
+      <button type="button" class="vault-dd-btn" id="vault-dd-btn" aria-label="Active vault" aria-haspopup="listbox" aria-expanded="false">
+        <span class="vault-dd-label" id="vault-dd-label">(no vaults)</span>
+        <svg class="vault-dd-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <ul class="vault-dd-menu" id="vault-dd-menu" role="listbox" hidden></ul>
+    </div>
     <div class="win-controls">
       <button class="win-btn" id="btn-minimize" aria-label="Minimize" title="Minimize">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
@@ -572,8 +709,13 @@
 
     <!-- History panel -->
     <div class="tab-panel" id="panel-history">
-      <div class="search-wrap">
-        <input type="text" class="search-input" id="search-input" placeholder="Search files…" />
+      <div class="hist-filters">
+        <select id="history-vault-filter" aria-label="Filter by vault">
+          <option value="">All</option>
+        </select>
+        <div class="search-wrap">
+          <input type="text" class="search-input" id="search-input" placeholder="Search files…" />
+        </div>
       </div>
       <div class="history-scroll" id="history-list"></div>
     </div>
@@ -590,47 +732,76 @@
   <!-- Settings panel (slides up from footer) -->
   <div class="settings-panel" id="settings-panel">
     <div class="settings-header">
-      <h3>R2 Configuration</h3>
+      <h3 id="settings-title">Vaults</h3>
       <button id="btn-close-settings" aria-label="Close settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <div class="settings-scroll">
-      <div class="field">
-        <label>Account ID</label>
-        <input type="text" class="mono" id="input-account-id" placeholder="ccc03bae7e7d34cae…" />
-      </div>
-      <div class="field">
-        <label>Bucket Name</label>
-        <input type="text" id="input-bucket" placeholder="r2share" />
-      </div>
-      <div class="field">
-        <label>Access Key ID</label>
-        <div class="mask-wrap">
-          <input type="password" class="mono" id="input-access" placeholder="Access Key ID" />
-          <button class="toggle-mask" data-target="input-access">show</button>
+      <!-- List view -->
+      <div class="settings-subview active" id="settings-list">
+        <div class="vault-list" id="vault-list"></div>
+        <div class="settings-actions">
+          <button class="ghost-btn" id="btn-add-vault">+ Add vault</button>
         </div>
-      </div>
-      <div class="field">
-        <label>Secret Access Key</label>
-        <div class="mask-wrap">
-          <input type="password" class="mono" id="input-secret" placeholder="Secret Access Key" />
-          <button class="toggle-mask" data-target="input-secret">show</button>
+        <div class="io-row">
+          <button class="ghost-btn" id="btn-export-vaults">Export…</button>
+          <button class="ghost-btn" id="btn-import-vaults">Import…</button>
         </div>
+        <label class="check-row">
+          <input type="checkbox" id="chk-include-secrets" checked />
+          Include secret keys on export
+        </label>
+        <p class="settings-note">Exported file contains your R2 secret keys — keep it private.</p>
+        <p class="settings-note">Import asks overwrite vs skip when a vault name already exists.</p>
+        <div class="settings-status" id="settings-status"></div>
       </div>
-      <div class="field">
-        <label>Public URL Base</label>
-        <input type="text" class="mono" id="input-public-url" placeholder="https://pub-xxx.r2.dev" />
-      </div>
-      <p class="settings-note">
-        Get Access Key ID + Secret from Cloudflare Dashboard → R2 → Manage API Tokens.
-      </p>
-      <div class="settings-actions">
-        <button class="ghost-btn" id="btn-test">Test connection</button>
-        <button class="primary-btn" id="btn-save-settings">Save</button>
+
+      <!-- Edit / add form -->
+      <div class="settings-subview" id="settings-form">
+        <div class="field">
+          <label>Vault name</label>
+          <input type="text" id="input-vault-name" placeholder="default" />
+        </div>
+        <div class="field">
+          <label>Account ID</label>
+          <input type="text" class="mono" id="input-account-id" placeholder="ccc03bae7e7d34cae…" />
+        </div>
+        <div class="field">
+          <label>Bucket Name</label>
+          <input type="text" id="input-bucket" placeholder="r2share" />
+        </div>
+        <div class="field">
+          <label>Access Key ID</label>
+          <div class="mask-wrap">
+            <input type="password" class="mono" id="input-access" placeholder="leave blank to keep" />
+            <button class="toggle-mask" data-target="input-access">show</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Secret Access Key</label>
+          <div class="mask-wrap">
+            <input type="password" class="mono" id="input-secret" placeholder="leave blank to keep" />
+            <button class="toggle-mask" data-target="input-secret">show</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Public URL Base</label>
+          <input type="text" class="mono" id="input-public-url" placeholder="https://pub-xxx.r2.dev" />
+        </div>
+        <p class="settings-note">
+          Leave Access/Secret blank when editing to keep the existing keys. Prefer env vars in the CLI for secrets.
+        </p>
+        <div class="settings-actions">
+          <button class="ghost-btn" id="btn-form-cancel">Cancel</button>
+          <button class="ghost-btn" id="btn-test">Test</button>
+          <button class="primary-btn" id="btn-save-settings">Save</button>
+        </div>
+        <div class="settings-status" id="form-status"></div>
       </div>
     </div>
   </div>
+
 </div>
 
 <script>
@@ -659,6 +830,10 @@
     lastResult:  null,     // UploadResult from last successful upload
     nameDirty:   false,
     renaming:    false,
+    vaults:      [],
+    activeVault: '',
+    historyVault: '',
+    editingVault: null,
   };
 
   // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -827,7 +1002,7 @@
         })
       : () => {};
     try {
-      const result = await invoke('upload_file', { path: filePath });
+      const result = await invoke('upload_file', { path: filePath, vault: state.activeVault || null });
       finishProgress(null);
       setTimeout(() => showDone(result), 300);
     } catch (err) {
@@ -853,6 +1028,7 @@
       const result = await invoke('upload_clipboard_image', {
         data:     b64,
         mimeType: file.type || 'image/png',
+        vault:    state.activeVault || null,
       });
       finishProgress(iv);
       setTimeout(() => showDone(result), 300);
@@ -1060,8 +1236,9 @@
 
     try {
       const updated = await invoke('rename_file', {
-        oldKey: previous.key,
-        newDisplayName: nextName,
+        oldKey:         state.lastResult.key,
+        newDisplayName: doneFilename.value.trim(),
+        vault:          state.activeVault || null,
       });
 
       state.lastResult = {
@@ -1092,7 +1269,7 @@
   // ── History ───────────────────────────────────────────────────────────────────
   async function loadHistory() {
     try {
-      const files = await invoke('list_files');
+      const files = await invoke('list_files', { vault: state.historyVault || null });
       state.history = files;
     } catch (err) {
       console.error('list_files failed:', err);
@@ -1143,7 +1320,7 @@
             <div class="history-row">
               <div class="file-icon">${fileIcon(it.display_name)}</div>
               <div class="file-info">
-                <div class="file-name">${escHtml(it.display_name)}</div>
+                <div class="file-name">${escHtml(it.display_name)}${!state.historyVault && it.vault ? `<span class="vault-tag">${escHtml(it.vault)}</span>` : ''}</div>
                 <div class="file-meta">${fmtSize(it.size)} · ${fmtTime(it.uploaded_at)}</div>
               </div>
               <div class="row-actions">
@@ -1191,7 +1368,7 @@
         btn.textContent = '…';
         btn.disabled = true;
         try {
-          await invoke('delete_file', { key });
+          await invoke('delete_file', { key, vault: (state.history.find(it => it.key === key) || {}).vault || state.activeVault || null });
           state.history = state.history.filter(it => it.key !== key);
         } catch (err) {
           alert('Delete failed: ' + err);
@@ -1215,62 +1392,318 @@
       .replace(/"/g, '&quot;');
   }
 
-  // ── Settings ──────────────────────────────────────────────────────────────────
-  function toggleSettings(open) {
-    state.settingsOpen = open;
-    settingsPanel.classList.toggle('open', open);
-    if (open) loadSettings();
+  // ── Vaults ────────────────────────────────────────────────────────────────────
+  async function refreshVaults() {
+    try {
+      state.vaults = await invoke('list_vaults');
+    } catch (err) {
+      console.warn('list_vaults failed:', err);
+      state.vaults = [];
+    }
+    if (!state.activeVault) {
+      const def = state.vaults.find(v => v.is_default);
+      state.activeVault = def ? def.name : (state.vaults[0] && state.vaults[0].name) || '';
+    }
+    fillVaultSelects();
   }
 
-  async function loadSettings() {
-    try {
-      const cfg = await invoke('get_config');
-      $('input-account-id').value  = cfg.account_id        || '';
-      $('input-bucket').value      = cfg.bucket             || 'r2share';
-      $('input-access').value      = cfg.access_key_id      || '';
-      $('input-secret').value      = cfg.secret_access_key  || '';
-      $('input-public-url').value  = cfg.public_url_base    || '';
-    } catch (err) {
-      console.warn('get_config failed:', err);
+  function vaultLabel(v) {
+    return escHtml(v.name) + (v.is_default ? ' <span class="star">★</span>' : '');
+  }
+
+  function closeVaultDropdown() {
+    const btn = $('vault-dd-btn');
+    const menu = $('vault-dd-menu');
+    if (!btn || !menu) return;
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+
+  function openVaultDropdown() {
+    const btn = $('vault-dd-btn');
+    const menu = $('vault-dd-menu');
+    if (!btn || !menu) return;
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
+  function fillVaultSelects() {
+    const label = $('vault-dd-label');
+    const menu = $('vault-dd-menu');
+    const hist = $('history-vault-filter');
+    const cur = state.activeVault;
+    const curVault = state.vaults.find(v => v.name === cur) || state.vaults.find(v => v.is_default) || state.vaults[0];
+    if (label) {
+      if (curVault) {
+        label.innerHTML = escHtml(curVault.name) + (curVault.is_default ? ' ★' : '');
+      } else {
+        label.textContent = '(no vaults)';
+      }
+    }
+    if (menu) {
+      if (!state.vaults.length) {
+        menu.innerHTML = '<li role="option" aria-disabled="true">(no vaults)</li>';
+      } else {
+        menu.innerHTML = state.vaults.map(v => {
+          const sel = v.name === cur ? 'true' : 'false';
+          return `<li role="option" data-name="${escHtml(v.name)}" aria-selected="${sel}">${vaultLabel(v)}</li>`;
+        }).join('');
+      }
+    }
+    if (hist) {
+      const hv = state.historyVault;
+      hist.innerHTML = `<option value="">All</option>` + state.vaults.map(v =>
+        `<option value="${escHtml(v.name)}"${v.name === hv ? ' selected' : ''}>${escHtml(v.name)}</option>`
+      ).join('');
     }
   }
 
-  $('btn-settings').addEventListener('click', () => toggleSettings(true));
-  $('btn-close-settings').addEventListener('click', () => toggleSettings(false));
+  async function switchVault(name) {
+    if (!name) return;
+    closeVaultDropdown();
+    try {
+      await invoke('set_default_vault', { name });
+      state.activeVault = name;
+      await refreshVaults();
+    } catch (err) {
+      alert('Could not switch vault: ' + err);
+      fillVaultSelects();
+    }
+  }
 
-  $('btn-save-settings').addEventListener('click', async () => {
-    const config = {
+  $('vault-dd-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = $('vault-dd-menu');
+    if (menu.hidden) openVaultDropdown();
+    else closeVaultDropdown();
+  });
+
+  $('vault-dd-menu').addEventListener('click', e => {
+    const li = e.target.closest('li[data-name]');
+    if (!li) return;
+    switchVault(li.dataset.name);
+  });
+
+  document.addEventListener('click', e => {
+    const wrap = e.target.closest('.vault-switch');
+    if (!wrap) closeVaultDropdown();
+  });
+
+  $('history-vault-filter').addEventListener('change', e => {
+    state.historyVault = e.target.value || '';
+    loadHistory();
+  });
+
+  // ── Settings ──────────────────────────────────────────────────────────────────
+  function setSettingsStatus(el, msg, kind) {
+    const node = $(el);
+    if (!node) return;
+    node.textContent = msg || '';
+    node.className = 'settings-status' + (kind ? ' ' + kind : '');
+  }
+
+  function showSettingsSubview(which) {
+    document.querySelectorAll('.settings-subview').forEach(el => {
+      el.classList.toggle('active', el.id === which);
+    });
+    $('settings-title').textContent = which === 'settings-form'
+      ? (state.editingVault ? 'Edit vault' : 'Add vault')
+      : 'Vaults';
+  }
+
+  function toggleSettings(open) {
+    state.settingsOpen = open;
+    settingsPanel.classList.toggle('open', open);
+    if (open) {
+      showSettingsSubview('settings-list');
+      loadVaultList();
+    }
+  }
+
+  async function loadVaultList() {
+    await refreshVaults();
+    const list = $('vault-list');
+    if (!state.vaults.length) {
+      list.innerHTML = '<p class="settings-note">No vaults yet. Add one to get started.</p>';
+      return;
+    }
+    list.innerHTML = state.vaults.map(v => `
+      <div class="vault-row" data-name="${escHtml(v.name)}">
+        <div class="vr-info">
+          <div class="vr-name">${escHtml(v.name)}${v.is_default ? '<span class="badge-default">default</span>' : ''}</div>
+          <div class="vr-meta">${escHtml(v.bucket || '—')}${v.configured ? '' : ' · not configured'}</div>
+        </div>
+        <div class="vr-actions">
+          ${v.is_default ? '' : `<button data-default="${escHtml(v.name)}">Default</button>`}
+          <button data-edit="${escHtml(v.name)}">Edit</button>
+          <button class="danger" data-del="${escHtml(v.name)}">Delete</button>
+        </div>
+      </div>`).join('');
+
+    list.querySelectorAll('[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => openVaultForm(btn.dataset.edit));
+    });
+    list.querySelectorAll('[data-default]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await invoke('set_default_vault', { name: btn.dataset.default });
+          state.activeVault = btn.dataset.default;
+          await loadVaultList();
+          setSettingsStatus('settings-status', 'Default vault updated.', 'ok');
+        } catch (err) {
+          setSettingsStatus('settings-status', String(err), 'err');
+        }
+      });
+    });
+    list.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.del;
+        if (!confirm('Delete vault "' + name + '"? This cannot be undone.')) return;
+        try {
+          await invoke('delete_vault', { name });
+          if (state.activeVault === name) state.activeVault = '';
+          await loadVaultList();
+          setSettingsStatus('settings-status', 'Deleted ' + name + '.', 'ok');
+        } catch (err) {
+          setSettingsStatus('settings-status', String(err), 'err');
+        }
+      });
+    });
+  }
+
+  async function openVaultForm(name) {
+    const isAdd = !name;
+    state.editingVault = isAdd ? '' : name;
+    $('input-vault-name').value = isAdd ? '' : name;
+    $('input-vault-name').disabled = !isAdd;
+    $('input-account-id').value = '';
+    $('input-bucket').value = 'r2share';
+    $('input-access').value = '';
+    $('input-secret').value = '';
+    $('input-public-url').value = '';
+    setSettingsStatus('form-status', '');
+    if (!isAdd) {
+      try {
+        const cfg = await invoke('get_vault', { name });
+        $('input-account-id').value = cfg.account_id || '';
+        $('input-bucket').value = cfg.bucket || 'r2share';
+        $('input-access').value = '';
+        $('input-secret').value = '';
+        $('input-access').placeholder = cfg.access_key_id ? '•••••••• (leave blank to keep)' : 'Access Key ID';
+        $('input-secret').placeholder = cfg.secret_access_key ? '•••••••• (leave blank to keep)' : 'Secret Access Key';
+        $('input-public-url').value = cfg.public_url_base || '';
+      } catch (err) {
+        setSettingsStatus('form-status', String(err), 'err');
+      }
+    } else {
+      $('input-access').placeholder = 'Access Key ID';
+      $('input-secret').placeholder = 'Secret Access Key';
+    }
+    showSettingsSubview('settings-form');
+  }
+
+  function readFormConfig() {
+    return {
       account_id:        $('input-account-id').value.trim(),
-      bucket:            $('input-bucket').value.trim()      || 'r2share',
+      bucket:            $('input-bucket').value.trim() || 'r2share',
       access_key_id:     $('input-access').value.trim(),
       secret_access_key: $('input-secret').value.trim(),
       public_url_base:   $('input-public-url').value.trim(),
     };
+  }
+
+  $('btn-settings').addEventListener('click', () => toggleSettings(true));
+  $('btn-close-settings').addEventListener('click', () => toggleSettings(false));
+  $('btn-add-vault').addEventListener('click', () => openVaultForm(null));
+  $('btn-form-cancel').addEventListener('click', () => {
+    showSettingsSubview('settings-list');
+    loadVaultList();
+  });
+
+  $('btn-save-settings').addEventListener('click', async () => {
+    const config = readFormConfig();
+    const name = $('input-vault-name').value.trim();
+    if (!name) {
+      setSettingsStatus('form-status', 'Vault name is required.', 'err');
+      return;
+    }
     try {
-      await invoke('save_config', { config });
-      toggleSettings(false);
+      if (state.editingVault === '') {
+        await invoke('add_vault', { name, config });
+        state.activeVault = name;
+      } else {
+        await invoke('update_vault', { name: state.editingVault || name, config });
+      }
+      setSettingsStatus('form-status', 'Saved.', 'ok');
+      showSettingsSubview('settings-list');
+      await loadVaultList();
     } catch (err) {
-      alert('Save failed: ' + err);
+      setSettingsStatus('form-status', String(err), 'err');
     }
   });
 
   $('btn-test').addEventListener('click', async () => {
     const btn = $('btn-test');
     btn.textContent = 'Testing…';
-    btn.disabled    = true;
+    btn.disabled = true;
+    const name = state.editingVault === '' ? null : (state.editingVault || state.activeVault || null);
     try {
-      await invoke('test_connection');
-      btn.textContent  = 'Connected ✓';
-      btn.style.color  = 'var(--success)';
+      await invoke('test_connection', { vault: name });
+      setSettingsStatus('form-status', 'Connected ✓', 'ok');
     } catch (err) {
-      btn.textContent  = 'Failed ✗';
-      btn.style.color  = 'var(--error)';
+      setSettingsStatus('form-status', String(err), 'err');
     }
-    setTimeout(() => {
-      btn.textContent = 'Test connection';
-      btn.style.color = '';
-      btn.disabled    = false;
-    }, 2400);
+    btn.textContent = 'Test';
+    btn.disabled = false;
+  });
+
+  async function dialogSave(opts) {
+    if (isTauri && window.__TAURI__ && window.__TAURI__.dialog && window.__TAURI__.dialog.save) {
+      return window.__TAURI__.dialog.save(opts);
+    }
+    return prompt('Save export as (absolute path):', opts.defaultPath || 'r2share-vaults.json');
+  }
+  async function dialogOpen(opts) {
+    if (isTauri && window.__TAURI__ && window.__TAURI__.dialog && window.__TAURI__.dialog.open) {
+      return window.__TAURI__.dialog.open(opts);
+    }
+    return prompt('Import file path (absolute):', '');
+  }
+
+  $('btn-export-vaults').addEventListener('click', async () => {
+    try {
+      const path = await dialogSave({
+        defaultPath: 'r2share-vaults.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path) return;
+      const includeSecrets = !!$('chk-include-secrets').checked;
+      await invoke('export_vaults', { path, includeSecrets, names: null });
+      setSettingsStatus('settings-status', 'Exported to ' + path, 'ok');
+    } catch (err) {
+      setSettingsStatus('settings-status', String(err), 'err');
+    }
+  });
+
+  $('btn-import-vaults').addEventListener('click', async () => {
+    try {
+      const path = await dialogOpen({
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!path) return;
+      const mode = confirm('Overwrite existing vaults with the same name?\n\nOK = overwrite (empty secrets keep existing keys)\nCancel = skip existing')
+        ? 'overwrite' : 'skip';
+      const result = await invoke('import_vaults', { path, mode });
+      await loadVaultList();
+      setSettingsStatus(
+        'settings-status',
+        'Import: ' + result.imported + ' added, ' + result.overwritten + ' updated, ' + result.skipped + ' skipped.',
+        'ok'
+      );
+    } catch (err) {
+      setSettingsStatus('settings-status', String(err), 'err');
+    }
   });
 
   // Mask toggles
@@ -1290,17 +1723,13 @@
   if (window.__r2shareFirstRun) {
     toggleSettings(true);
   } else {
-    // The Rust-side flag can be set before this page loads (seen on Linux),
-    // so also check the config directly.
-    invoke('get_config').then(c => {
-      if (!c.account_id || !c.access_key_id || !c.secret_access_key || !c.public_url_base) {
-        toggleSettings(true);
-      }
+    invoke('list_vaults').then(vs => {
+      if (!vs.length || !vs.some(v => v.configured)) toggleSettings(true);
     }).catch(() => {});
   }
 
   // ── Initial render ────────────────────────────────────────────────────────────
-  renderHistory(); // render empty state until history tab is actually opened
+  refreshVaults().then(() => { renderHistory(); loadHistory(); }).catch(() => { renderHistory(); });
 })();
 </script>
 </body>

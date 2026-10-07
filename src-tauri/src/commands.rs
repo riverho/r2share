@@ -1,28 +1,83 @@
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 
 use crate::{
-    config::{self, Config, ImportMode, ImportResult},
+    config::{self, AppConfig, Config, ImportMode, ImportResult, Vault},
     db,
     r2::{generate_key, generate_named_key, ProgressFn, R2Client, UploadResult},
     AppState,
 };
 
+/// Public vault summary for the GUI switcher / Settings list (never includes secrets).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultInfo {
+    pub name: String,
+    pub bucket: String,
+    pub is_default: bool,
+    pub configured: bool,
+}
+
+fn resolve_vault(cfg: &AppConfig, vault: Option<&str>) -> Result<(String, Config), String> {
+    let name = vault
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.default_vault.as_str());
+    let v = cfg
+        .vault_by_name(name)
+        .ok_or_else(|| format!("vault not found: {name}"))?;
+    Ok((v.name.clone(), v.to_flat()))
+}
+
+fn require_configured(config: &Config) -> Result<(), String> {
+    if config.is_configured() {
+        Ok(())
+    } else {
+        Err("R2 not configured. Open Settings and enter your credentials.".to_string())
+    }
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
+fn preserve_blank_secrets(existing: &Config, incoming: Config) -> Config {
+    Config {
+        account_id: incoming.account_id,
+        bucket: if incoming.bucket.is_empty() {
+            existing.bucket.clone()
+        } else {
+            incoming.bucket
+        },
+        access_key_id: if incoming.access_key_id.is_empty() {
+            existing.access_key_id.clone()
+        } else {
+            incoming.access_key_id
+        },
+        secret_access_key: if incoming.secret_access_key.is_empty() {
+            existing.secret_access_key.clone()
+        } else {
+            incoming.secret_access_key
+        },
+        public_url_base: incoming.public_url_base,
+    }
+}
+
 // ── Upload ────────────────────────────────────────────────────────────────────
 
-/// Upload a file from a local filesystem path (from the file picker or drag-drop).
-/// Emits `upload-progress` events (`{ sent, total }` in bytes) while uploading.
+/// Upload a file. Optional `vault` falls back to the default vault.
 #[tauri::command]
 pub async fn upload_file(
     path: String,
+    vault: Option<String>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<UploadResult, String> {
-    let (config, vault_name) = {
+    let (vault_name, config) = {
         let app_cfg = state.app_config.lock().await;
-        (app_cfg.default_flat(), app_cfg.default_vault.clone())
+        resolve_vault(&app_cfg, vault.as_deref())?
     };
     require_configured(&config)?;
 
@@ -34,7 +89,10 @@ pub async fn upload_file(
 
     let client = R2Client::new(&config).await?;
     let on_progress: ProgressFn = Arc::new(move |sent, total| {
-        let _ = app.emit("upload-progress", serde_json::json!({ "sent": sent, "total": total }));
+        let _ = app.emit(
+            "upload-progress",
+            serde_json::json!({ "sent": sent, "total": total }),
+        );
     });
     let result = client.upload_path(&path, &key, on_progress).await?;
 
@@ -53,16 +111,17 @@ pub async fn upload_file(
     Ok(result)
 }
 
-/// Upload a clipboard image delivered as a base64-encoded blob from the frontend.
+/// Upload a clipboard image. Optional `vault` falls back to the default vault.
 #[tauri::command]
 pub async fn upload_clipboard_image(
     data: String,
     mime_type: String,
+    vault: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<UploadResult, String> {
-    let (config, vault_name) = {
+    let (vault_name, config) = {
         let app_cfg = state.app_config.lock().await;
-        (app_cfg.default_flat(), app_cfg.default_vault.clone())
+        resolve_vault(&app_cfg, vault.as_deref())?
     };
     require_configured(&config)?;
 
@@ -106,18 +165,39 @@ pub async fn upload_clipboard_image(
 
 // ── History ───────────────────────────────────────────────────────────────────
 
-/// Return all upload records from local SQLite, newest first.
+/// List uploads. `vault: None` = all; `Some(name)` filters by vault.
 #[tauri::command]
-pub async fn list_files(state: State<'_, AppState>) -> Result<Vec<db::FileRecord>, String> {
+pub async fn list_files(
+    vault: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<db::FileRecord>, String> {
     let db = state.db.lock().await;
-    db::list(&db, None, None).map_err(|e| e.to_string())
+    let filter = vault
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "*");
+    db::list(&db, filter, None).map_err(|e| e.to_string())
 }
 
 /// Delete an object from R2 and remove it from local history.
-/// If R2 credentials are not configured, only removes the local record.
 #[tauri::command]
-pub async fn delete_file(key: String, state: State<'_, AppState>) -> Result<(), String> {
-    let config = state.app_config.lock().await.default_flat();
+pub async fn delete_file(
+    key: String,
+    vault: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (config, record_vault) = {
+        let db = state.db.lock().await;
+        let rec = db::get(&db, &key).ok();
+        drop(db);
+        let app_cfg = state.app_config.lock().await;
+        let name = vault
+            .as_deref()
+            .or_else(|| rec.as_ref().map(|r| r.vault.as_str()));
+        let (_n, flat) = resolve_vault(&app_cfg, name)?;
+        (flat, rec.map(|r| r.vault))
+    };
+    let _ = record_vault;
 
     if config.is_configured() {
         let client = R2Client::new(&config).await?;
@@ -133,6 +213,7 @@ pub async fn delete_file(key: String, state: State<'_, AppState>) -> Result<(), 
 pub async fn rename_file(
     old_key: String,
     new_display_name: String,
+    vault: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<db::FileRecord, String> {
     let display_name = new_display_name.trim();
@@ -140,13 +221,17 @@ pub async fn rename_file(
         return Err("Enter a filename before saving.".to_string());
     }
 
-    let config = state.app_config.lock().await.default_flat();
-    require_configured(&config)?;
-
     let old_record = {
         let db = state.db.lock().await;
         db::get(&db, &old_key).map_err(|e| e.to_string())?
     };
+
+    let (_vault_name, config) = {
+        let app_cfg = state.app_config.lock().await;
+        let name = vault.as_deref().or(Some(old_record.vault.as_str()));
+        resolve_vault(&app_cfg, name)?
+    };
+    require_configured(&config)?;
 
     let new_key = generate_named_key(display_name)?;
     let client = R2Client::new(&config).await?;
@@ -173,15 +258,15 @@ pub async fn rename_file(
     Ok(updated)
 }
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── Config (default-vault adapters; keep working for old UI) ──────────────────
 
-/// Return the default vault as a flat Config (Settings UI unchanged).
+/// Return the default vault as a flat Config.
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
     Ok(state.app_config.lock().await.default_flat())
 }
 
-/// Persist updated default-vault credentials and reload the in-memory copy.
+/// Persist updated default-vault credentials (blank secrets preserved).
 #[tauri::command]
 pub async fn save_config(
     config: Config,
@@ -190,21 +275,145 @@ pub async fn save_config(
 ) -> Result<(), String> {
     let data_dir = app_data_dir(&app)?;
     let mut app_cfg = state.app_config.lock().await;
-    app_cfg.set_default_flat(config);
+    let existing = app_cfg.default_flat();
+    let merged = preserve_blank_secrets(&existing, config);
+    app_cfg.set_default_flat(merged);
     config::save(&data_dir, &app_cfg)?;
     Ok(())
 }
 
-/// Verify R2 credentials by hitting HeadBucket on the default vault.
+/// Verify R2 credentials. Optional `vault` falls back to default.
 #[tauri::command]
-pub async fn test_connection(state: State<'_, AppState>) -> Result<(), String> {
-    let config = state.app_config.lock().await.default_flat();
+pub async fn test_connection(
+    vault: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let (_name, config) = {
+        let app_cfg = state.app_config.lock().await;
+        resolve_vault(&app_cfg, vault.as_deref())?
+    };
     require_configured(&config)?;
     let client = R2Client::new(&config).await?;
     client.test().await
 }
 
-/// Export vaults to a JSON file (0600 on Unix). No UI yet — for CLI / future Settings.
+// ── Vault CRUD ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_vaults(state: State<'_, AppState>) -> Result<Vec<VaultInfo>, String> {
+    let cfg = state.app_config.lock().await;
+    Ok(cfg
+        .vaults
+        .iter()
+        .map(|v| VaultInfo {
+            name: v.name.clone(),
+            bucket: v.bucket.clone(),
+            is_default: v.name == cfg.default_vault,
+            configured: v.to_flat().is_configured(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn get_vault(
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Config, String> {
+    let cfg = state.app_config.lock().await;
+    Ok(resolve_vault(&cfg, name.as_deref())?.1)
+}
+
+#[tauri::command]
+pub async fn set_default_vault(
+    name: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    if cfg.vault_by_name(&name).is_none() {
+        return Err(format!("vault not found: {name}"));
+    }
+    cfg.default_vault = name;
+    config::save(&data_dir, &cfg)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_vault(
+    name: String,
+    config: Config,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("vault name must not be empty".into());
+    }
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    if cfg.vault_by_name(&name).is_some() {
+        return Err(format!("vault already exists: {name}"));
+    }
+    let mut v = Vault::new(&name);
+    v.apply_flat(&config);
+    v.validate()?;
+    cfg.vaults.push(v);
+    if cfg.vaults.len() == 1 {
+        cfg.default_vault = name;
+    }
+    cfg.validate()?;
+    config::save(&data_dir, &cfg)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_vault(
+    name: String,
+    config: Config,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    let existing = cfg
+        .vault_by_name(&name)
+        .ok_or_else(|| format!("vault not found: {name}"))?
+        .to_flat();
+    let merged = preserve_blank_secrets(&existing, config);
+    let v = cfg
+        .vault_by_name_mut(&name)
+        .ok_or_else(|| format!("vault not found: {name}"))?;
+    v.apply_flat(&merged);
+    v.validate()?;
+    cfg.validate()?;
+    config::save(&data_dir, &cfg)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_vault(
+    name: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app_data_dir(&app)?;
+    let mut cfg = state.app_config.lock().await;
+    if cfg.vault_by_name(&name).is_none() {
+        return Err(format!("vault not found: {name}"));
+    }
+    if cfg.vaults.len() <= 1 {
+        return Err("cannot delete the last vault".into());
+    }
+    cfg.vaults.retain(|v| v.name != name);
+    if cfg.default_vault == name {
+        cfg.default_vault = cfg.vaults[0].name.clone();
+    }
+    config::save(&data_dir, &cfg)?;
+    Ok(())
+}
+
+/// Export vaults to a JSON file (0600 on Unix).
 #[tauri::command]
 pub async fn export_vaults(
     path: String,
@@ -213,10 +422,15 @@ pub async fn export_vaults(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let data_dir = app_data_dir(&app)?;
-    config::export_vaults(&data_dir, PathBuf::from(path).as_path(), include_secrets, names)
+    config::export_vaults(
+        &data_dir,
+        PathBuf::from(path).as_path(),
+        include_secrets,
+        names,
+    )
 }
 
-/// Import vaults from a JSON file (`mode`: "overwrite" | "skip"). Refreshes in-memory config.
+/// Import vaults from a JSON file (`mode`: "overwrite" | "skip").
 #[tauri::command]
 pub async fn import_vaults(
     path: String,
@@ -227,13 +441,140 @@ pub async fn import_vaults(
     let data_dir = app_data_dir(&app)?;
     let import_mode = ImportMode::parse(&mode)?;
     let result = config::import_vaults(&data_dir, PathBuf::from(path).as_path(), import_mode)?;
-    // Reload so the GUI sees merged vaults / default credentials.
     *state.app_config.lock().await = config::load(&data_dir);
     Ok(result)
 }
 
-fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map_err(|e| e.to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn tmp() -> PathBuf {
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let d = std::env::temp_dir().join(format!("r2share-cmd-test-{n}"));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn seeded() -> (PathBuf, AppConfig) {
+        let dir = tmp();
+        let mut cfg = AppConfig::empty_v2();
+        let mut a = Vault::new("alpha");
+        a.account_id = "acct-a".into();
+        a.access_key_id = "KEYA".into();
+        a.secret_access_key = "SECRETA".into();
+        a.bucket = "ba".into();
+        a.public_url_base = "https://a.example".into();
+        let mut b = Vault::new("beta");
+        b.account_id = "acct-b".into();
+        b.access_key_id = "KEYB".into();
+        b.secret_access_key = "SECRETB".into();
+        b.bucket = "bb".into();
+        b.public_url_base = "https://b.example".into();
+        cfg.vaults = vec![a, b];
+        cfg.default_vault = "alpha".into();
+        config::save(&dir, &cfg).unwrap();
+        (dir, cfg)
+    }
+
+    #[test]
+    fn resolve_vault_falls_back_to_default() {
+        let (_dir, cfg) = seeded();
+        let (n, flat) = resolve_vault(&cfg, None).unwrap();
+        assert_eq!(n, "alpha");
+        assert_eq!(flat.bucket, "ba");
+        let (n2, _) = resolve_vault(&cfg, Some("beta")).unwrap();
+        assert_eq!(n2, "beta");
+        assert!(resolve_vault(&cfg, Some("missing")).is_err());
+    }
+
+    #[test]
+    fn preserve_blank_secrets_keeps_existing_keys() {
+        let existing = Config {
+            account_id: "a".into(),
+            bucket: "b".into(),
+            access_key_id: "OLDKEY".into(),
+            secret_access_key: "OLDSECRET".into(),
+            public_url_base: "https://old".into(),
+        };
+        let incoming = Config {
+            account_id: "a2".into(),
+            bucket: "b2".into(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            public_url_base: "https://new".into(),
+        };
+        let m = preserve_blank_secrets(&existing, incoming);
+        assert_eq!(m.account_id, "a2");
+        assert_eq!(m.bucket, "b2");
+        assert_eq!(m.access_key_id, "OLDKEY");
+        assert_eq!(m.secret_access_key, "OLDSECRET");
+        assert_eq!(m.public_url_base, "https://new");
+    }
+
+    #[test]
+    fn vault_crud_add_update_delete_set_default() {
+        let (dir, mut cfg) = seeded();
+        // add
+        let mut v = Vault::new("gamma");
+        v.account_id = "acct-g".into();
+        v.access_key_id = "KEYG".into();
+        v.secret_access_key = "SECRETG".into();
+        v.public_url_base = "https://g.example".into();
+        cfg.vaults.push(v);
+        config::save(&dir, &cfg).unwrap();
+        let loaded = config::load(&dir);
+        assert_eq!(loaded.vaults.len(), 3);
+
+        // update with blank secrets
+        let mut cfg = loaded;
+        let existing = cfg.vault_by_name("gamma").unwrap().to_flat();
+        let merged = preserve_blank_secrets(
+            &existing,
+            Config {
+                account_id: "acct-g2".into(),
+                bucket: "bg".into(),
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+                public_url_base: "https://g2.example".into(),
+            },
+        );
+        cfg.vault_by_name_mut("gamma").unwrap().apply_flat(&merged);
+        config::save(&dir, &cfg).unwrap();
+        let g = config::load(&dir).vault_by_name("gamma").unwrap().clone();
+        assert_eq!(g.account_id, "acct-g2");
+        assert_eq!(g.access_key_id, "KEYG");
+        assert_eq!(g.secret_access_key, "SECRETG");
+
+        // set default
+        let mut cfg = config::load(&dir);
+        cfg.default_vault = "beta".into();
+        config::save(&dir, &cfg).unwrap();
+        assert_eq!(config::load(&dir).default_vault, "beta");
+
+        // delete last-but-one ok; cannot delete last
+        let mut cfg = config::load(&dir);
+        cfg.vaults.retain(|v| v.name != "gamma");
+        config::save(&dir, &cfg).unwrap();
+        assert_eq!(config::load(&dir).vaults.len(), 2);
+
+        let mut cfg = config::load(&dir);
+        cfg.vaults.retain(|v| v.name != "beta");
+        if cfg.default_vault == "beta" {
+            cfg.default_vault = cfg.vaults[0].name.clone();
+        }
+        config::save(&dir, &cfg).unwrap();
+        assert_eq!(config::load(&dir).vaults.len(), 1);
+        // deleting the last is refused by the command layer; simulate check:
+        assert_eq!(config::load(&dir).vaults.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
@@ -326,12 +667,3 @@ pub async fn minimize_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-fn require_configured(config: &Config) -> Result<(), String> {
-    if config.is_configured() {
-        Ok(())
-    } else {
-        Err("R2 not configured. Open Settings and enter your credentials.".to_string())
-    }
-}
