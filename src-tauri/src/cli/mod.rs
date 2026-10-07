@@ -15,7 +15,7 @@ use crate::config::{
     self, AppConfig, Config, ImportMode, Vault,
 };
 use crate::db;
-use crate::r2::{generate_key, ProgressFn, R2Client};
+use crate::r2::{ProgressFn, R2Client};
 
 /// App data directory shared with the GUI (Linux XDG).
 pub fn default_data_dir() -> PathBuf {
@@ -104,11 +104,11 @@ async fn cmd_upload(
         if !path.is_file() {
             return Err(format!("not a file: {}", path.display()));
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("bin");
-        let key = generate_key(ext);
+        let desired = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+        let key = client.allocate_key(desired, None).await?;
 
         let on_progress: ProgressFn = if show_progress {
             let pb = ProgressBar::new(0);

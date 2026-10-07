@@ -7,7 +7,7 @@ use tauri::{Emitter, Manager, State};
 use crate::{
     config::{self, AppConfig, Config, FolderMapping, ImportMode, ImportResult, Vault},
     db,
-    r2::{generate_key, generate_named_key, ProgressFn, R2Client, UploadResult},
+    r2::{ProgressFn, R2Client, UploadResult},
     AppState,
 };
 
@@ -88,13 +88,13 @@ pub async fn upload_file(
     };
     require_configured(&config)?;
 
-    let ext = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
-    let key = generate_key(ext);
+    let desired = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
 
     let client = R2Client::new(&config).await?;
+    let key = client.allocate_key(desired, None).await?;
     let on_progress: ProgressFn = Arc::new(move |sent, total| {
         let _ = app.emit(
             "upload-progress",
@@ -138,21 +138,21 @@ pub async fn upload_clipboard_image(
         "image/webp" => "webp",
         _ => "png",
     };
-    let key = generate_key(ext);
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let display_name = format!("clipboard-{}.{}", ts, ext);
+    let desired = format!("clipboard-{}.{}", ts, ext);
 
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&data)
         .map_err(|e| format!("Bad base64: {}", e))?;
 
     let client = R2Client::new(&config).await?;
+    let key = client.allocate_key(&desired, None).await?;
     let result = client
-        .upload_bytes(&key, bytes, &mime_type, &display_name)
+        .upload_bytes(&key, bytes, &mime_type, &key)
         .await?;
 
     let db = state.db.lock().await;
@@ -240,15 +240,18 @@ pub async fn rename_file(
     };
     require_configured(&config)?;
 
-    let new_key = generate_named_key(display_name)?;
     let client = R2Client::new(&config).await?;
-    client.copy(&old_key, &new_key).await?;
+    let new_key = client.allocate_key(display_name, Some(&old_key)).await?;
     let new_url = client.public_url(&new_key);
+
+    if new_key != old_key {
+        client.copy(&old_key, &new_key).await?;
+    }
 
     let updated = db::FileRecord {
         id: old_record.id,
         key: new_key.clone(),
-        display_name: display_name.to_string(),
+        display_name: new_key.clone(),
         size: old_record.size,
         content_type: old_record.content_type,
         url: new_url.clone(),
@@ -257,10 +260,12 @@ pub async fn rename_file(
     };
 
     let db = state.db.lock().await;
-    db::rename(&db, &old_key, &new_key, display_name, &new_url).map_err(|e| e.to_string())?;
+    db::rename(&db, &old_key, &new_key, &new_key, &new_url).map_err(|e| e.to_string())?;
     drop(db);
 
-    let _ = client.delete(&old_key).await;
+    if new_key != old_key {
+        let _ = client.delete(&old_key).await;
+    }
 
     Ok(updated)
 }
