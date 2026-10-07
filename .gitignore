@@ -13,6 +13,12 @@ src-tauri/gen/
 !.env.example
 *.local
 *.log
+*.pem
+*.key
+*credentials*
+*secrets*
+config.json.bak
+*.bak
 
 # Agent memory, guardrails, and local workspace metadata
 .codex/
@@ -38,6 +44,14 @@ architecture/
 
 # Local setup helpers
 setup-r2.ps1
+
+# Smoke / shot / worktree noise that might land inside the repo
+r2share-shots/
+r2s-smoke*/
+.r2share-smoke*/
+*.deb
+*.rpm
+*.AppImage
 
 # OS/editor noise
 .DS_Store
